@@ -4,46 +4,34 @@
 
 ### Character notes
 
-- Guild notes' saved data, Share guild notes setting and Clear guild notes
-- Guild notes load without a clock call, and the clear dialog closes with the module
-- Share notes with the guild over addon messages
-- Guild notes in the window, tooltips, Looking For Group and group warnings
-- Deletions kept for good, per-session message ids, no future times
-
-### Combat queue
-
-- Ns.CombatQueue.Defer, the one PLAYER_REGEN_ENABLED handler
-
-### Combat queue fixes
-
-- Restored waiting spells and in-combat quest changes catch up
-
-### Guardrails fixes
-
-- One lexer, exact hints, stricter aliases and combat exemptions
-
-### Kill stats
-
-- Forever-style page tabs under the window
+- Shared guild notes: turn on **Share guild notes** and your notes go to guildmates with the addon (tick **Private**
+  to keep one to yourself). Guild notes show with their author in the notes window, tooltips and the Looking For
+  Group window, count toward group warnings, and are passed along to guildmates who weren't online at the same time.
+- **Clear guild notes** removes every note you didn't write, for good.
 
 ### Loadouts
 
-- Edit a saved loadout's macros, bars, bindings and settings (data), ready-made macros, account macros
-- Edit a loadout's macros in the window, with ready-made macros
-- Edit a loadout's bars, key bindings and settings, and revert changes
-- Save and restore account macros and macro key bindings, refuse a load without macro room
-- Share edited loadouts as KU2 so older versions refuse them, check ready-made options on import
-- Typed edits save to the loadout they were typed in, put a loadout's macro on a slot
-- Save current keeps character macros only, as before; backups keep general ones too
-- Find macros per scope, Restore removes macros and keys a load added, act on typed edits
-
-### Nearby alert
-
-- Off by default
+- Edit a saved loadout: write macros (icon, text with a 255 counter, character or account), insert helpers and
+  spells, or add a ready-made macro (mouseover cast, focus, cast sequence, trinket and cast, stop casting, start
+  attack, pet).
+- Edit its bars (drop spells, items and macros on slots, drag to swap, right-click to put a macro or clear), key
+  bindings (click, then press a key) and settings. **Revert changes** undoes your edits.
+- Loading saves and restores account macros and macro key bindings too, and refuses a load that has no room for its
+  macros before changing anything.
+- Loadouts using new features share as `KU2:`; plain ones stay `KU1:` for older versions.
 
 ### Ping macro
 
-- Nearby alert is part of it, on its settings page, off by default
+- Nearby alert is now part of the Ping macro, on its settings page, and off until you tick **Alert when nearby**.
+
+### Kill stats
+
+- Page tabs in WoW Forever's style, under the window.
+
+### General
+
+- Settings that can't open in combat, and macros and bars that change after combat, now all wait for combat to end
+  the same way.
 
 ## v1.4 (2026-11-12)
 
