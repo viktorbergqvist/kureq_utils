@@ -1,0 +1,23 @@
+# Builds the addon zip and publishes it when a version tag (v1.4, v1.4.1, ...) is pushed.
+# GitHub Releases always; CurseForge and Wago once their project IDs are in the toc
+# (## X-Curse-Project-ID, ## X-Wago-ID) and the CF_API_KEY / WAGO_API_TOKEN secrets are set.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: BigWigsMods/packager@v2
