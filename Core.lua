@@ -1,6 +1,8 @@
 -- Kureq Utils core: saved settings, the settings pages and their widgets, /ku, and the KureqUtils
 -- API that companion addons use. The utilities themselves are in Ping.lua and Delete.lua.
 local ADDON, ns = ...
+local GetAddOnMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or _G.GetAddOnMetadata
+ns.version = GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version") or "?" -- the toc's, set by each release
 local fmt, tinsert = string.format, table.insert
 
 ns.defaults, ns.onLoad, ns.commands = {}, {}, {}
@@ -72,6 +74,7 @@ local function newPanel(title, subtitle)
     local header = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
     header:SetPoint("TOPLEFT", 7, -16)
     header:SetText(title)
+    panel.header = header
     local divider = panel:CreateTexture(nil, "ARTWORK")
     divider:SetAtlas("Options_HorizontalDivider", true)
     divider:SetPoint("TOPLEFT", 0, -50)
@@ -369,6 +372,11 @@ end
 -- Pages: "Kureq Utils" with one sub-page per utility ------------------------------------------
 
 local root = newPanel("Kureq Utils", "Small utilities, one page each below.")
+do -- the version, from the toc, beside the title (the Changelog page says what changed)
+    local version = root:CreateFontString(nil, "ARTWORK", "GameFontDisable")
+    version:SetPoint("BOTTOMLEFT", root.header, "BOTTOMRIGHT", 10, 3)
+    version:SetText("Version " .. ns.version)
+end
 -- Modules add their checkbox as they register, the separate addons after Kureq Utils has loaded, so the
 -- checkboxes go in a row that grows, with the commands below it.
 ns.Header(root, "Modules")
@@ -549,7 +557,7 @@ do
     end)
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:SetText("Kureq Utils", 1, 1, 1)
+        GameTooltip:SetText("Kureq Utils " .. ns.version, 1, 1, 1)
         GameTooltip:AddLine("Click to open the settings.")
         GameTooltip:AddLine("Right-click for kill stats, notes and loadouts.")
         GameTooltip:Show()

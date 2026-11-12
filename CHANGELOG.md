@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6 (2026-11-12)
+
+### General
+
+- Your version beside the settings title, and a Changelog page of what changed in each release
+
 ## v1.5 (2026-11-12)
 
 ### Character notes
