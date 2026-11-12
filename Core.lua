@@ -447,26 +447,31 @@ function ns.AddSettingsPage(title, subtitle, key)
     return page, sub
 end
 
+-- What combat blocks (macros, action bars, opening the settings) waits for it to end: Defer(key, fn) runs fn now out
+-- of combat; in combat it keeps fn under key (a later Defer with the same key replaces it) and runs each kept fn once
+-- when combat ends, in the order first deferred. The only PLAYER_REGEN_ENABLED registration (tools/guardrails.py).
+local deferred, deferredKeys = {}, {}
+local combatQueue = CreateFrame("Frame")
+combatQueue:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatQueue:SetScript("OnEvent", function()
+    local fns, keys = deferred, deferredKeys
+    deferred, deferredKeys = {}, {}
+    for _, key in ipairs(keys) do xpcall(fns[key], geterrorhandler()) end -- one error doesn't stop the rest
+end)
+ns.CombatQueue = {}
+function ns.CombatQueue.Defer(key, fn)
+    if not InCombatLockdown() then return fn() end
+    if not deferred[key] then tinsert(deferredKeys, key) end
+    deferred[key] = fn
+end
+
 -- WoW Forever blocks an addon opening the settings in combat ("Interface action failed because of an AddOn"), so
 -- then they open when combat ends.
-local waitingCategory
-local afterCombat = CreateFrame("Frame")
-afterCombat:SetScript("OnEvent", function(self)
-    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-    local category = waitingCategory
-    waitingCategory = nil
-    ns.OpenSettings(category)
-end)
 function ns.OpenSettings(category)
     category = category or rootCategory
     if not (category and Settings and Settings.OpenToCategory) then return end
-    if InCombatLockdown() then
-        waitingCategory = category
-        afterCombat:RegisterEvent("PLAYER_REGEN_ENABLED")
-        ns.say("the settings open when combat ends.")
-        return
-    end
-    Settings.OpenToCategory(category:GetID())
+    if InCombatLockdown() then ns.say("the settings open when combat ends.") end
+    ns.CombatQueue.Defer("settings", function() Settings.OpenToCategory(category:GetID()) end)
 end
 
 -- /ku <command> ... ; each utility registers its commands (and a help line) in ns.commands.
@@ -589,6 +594,8 @@ KureqUtils = {
     -- a settings sub-page under Kureq Utils (key: its module's); returns the panel and its category
     AddSettingsPage = ns.AddSettingsPage,
     OpenSettings = ns.OpenSettings,
+    -- CombatQueue.Defer(key, fn): fn now out of combat, else once when combat ends (the last fn per key)
+    CombatQueue = ns.CombatQueue,
     Checkbox = ns.Checkbox,
     Header = ns.Header,
     Label = ns.Label,

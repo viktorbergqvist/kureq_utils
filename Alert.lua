@@ -1,16 +1,24 @@
 -- Nearby target alert: a sound and an on-screen message when a mob you're after shows up nearby.
 -- It watches enemy nameplates, so it sees what your nameplates show (enemy nameplates on, the V key).
 -- What to watch comes from named lists: the ping macro's custom target, and companion addons
--- through KureqUtils.SetWatchList.
+-- through KureqUtils.SetWatchList. It's part of the Ping macro module (its settings are on that page) and is off until
+-- the player turns it on.
 local _, ns = ...
-ns.AddModule("alert", "Nearby alert", "A sound and a message when a mob you're after shows up nearby.")
 local tinsert = table.insert
 
-ns.defaults.alert = {enabled = true, sound = true}
+ns.defaults.alert = {on = false, sound = true}
 local MIN_GAP = 5 -- seconds; a pack showing up together alerts once
 
 local db
-tinsert(ns.onLoad, function(root) db = root.alert end)
+tinsert(ns.onLoad, function(root)
+    db = root.alert
+    -- once: Nearby alert was its own module with "enabled" on by default; now it's off unless this character had
+    -- turned that module on
+    if db.enabled ~= nil then
+        db.on, db.enabled = db.enabled and ns.charDB.modules.alert == true, nil
+    end
+    ns.charDB.modules.alert = nil
+end)
 
 local lists, watched, alerted = {}, {}, {}
 local lastAlert = 0
@@ -27,7 +35,7 @@ end
 -- Each mob (by GUID) alerts once a session. Lists are resent on every quest log update, so a
 -- changed list must not reset this, or every watched mob in view would alert again.
 local function check(unit)
-    if not (db and db.enabled and ns.IsOn("alert")) then return end
+    if not (db and db.on and ns.IsOn("ping")) then return end
     local name = UnitName(unit)
     if not (name and watched[name:lower()]) or UnitIsDead(unit) or not UnitCanAttack("player", unit) then return end
     if UnitIsTapDenied and UnitIsTapDenied(unit) then return end -- tagged by someone else: no credit for you
@@ -48,7 +56,7 @@ local function checkAll()
     end
 end
 
-ns.OnModuleChange("alert", function(on) if on then checkAll() end end) -- mobs already in view when turned on
+ns.OnModuleChange("ping", function(on) if on then checkAll() end end) -- mobs already in view when turned on
 
 local watchLine
 function ns.setWatch(source, names)
@@ -67,12 +75,13 @@ end
 
 -- Settings page ------------------------------------------------------------------------------
 
-local panel = ns.AddSettingsPage("Nearby alert",
-    "A sound and an on-screen message when a mob you're after shows up nearby: the ping macro's custom target, "
-        .. "and the mobs companion addons add. It uses enemy nameplates, so turn those on (V).", "alert")
+local panel = ns.ping.panel
+ns.Header(panel, "Nearby alert")
+ns.Label(panel, "A sound and an on-screen message when the ping macro's mobs (or a companion addon's) show up "
+    .. "nearby. It uses enemy nameplates, so turn those on (V).", "GameFontDisable")
 
-ns.Checkbox(panel, "Alert when nearby", "Show a message when one of the watched mobs appears.",
-    function() return db and db.enabled end, function(v) db.enabled = v; if v then checkAll() end end)
+ns.Checkbox(panel, "Alert when nearby", "Show a message when one of the watched mobs appears. Off by default.",
+    function() return db and db.on end, function(v) db.on = v; if v then checkAll() end end)
 
 ns.Checkbox(panel, "Play a sound", "Play the raid warning sound with the message.",
     function() return db and db.sound end, function(v) db.sound = v end)

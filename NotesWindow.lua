@@ -1,6 +1,7 @@
 -- The character notes window (Notes.lua), in Kureq Utils' look (Style.lua): a name box to add someone, stat tiles,
--- the noted characters on the left (search, rating filter, sort tabs) and the chosen one's stars and note on the
--- right. Everything saves as you change it.
+-- the noted characters on the left (search, rating filter, Mine / Guild / All, sort tabs) and the chosen one on the
+-- right: your stars and note (tab "Your note"), or the guild's notes on them, read-only ("Guild notes"). Everything
+-- saves as you change it.
 local _, ns = ...
 local N, St = ns.notes, ns.style
 local Pane, Text, Line, TextTab = St.Pane, St.Text, St.Line, St.TextTab
@@ -15,6 +16,8 @@ local EDITOR_W = BW - 2 * PAD - LIST_W - GAP -- the pane right of the list
 
 local frame, body = St.Window("KureqNotesFrame", "Character Notes", W, H)
 local selected -- the key of the note shown on the right
+-- a note of yours on a player you only have guild notes on, not saved until something is written in it
+local draft
 local refresh, showEditor
 
 local function stamp(t, long) return t and date(long and "%d %b %Y, %H:%M" or "%d %b", t) or "-" end
@@ -24,7 +27,7 @@ local function firstLine(text) return ((text or ""):match("^[^\n]*") or "") end
 
 local search = CreateFrame("EditBox", nil, body, "SearchBoxTemplate")
 search:SetPoint("TOPLEFT", PAD + 6, -PAD - 4)
-search:SetSize(200, 20)
+search:SetSize(150, 20)
 search:SetAutoFocus(false)
 search:HookScript("OnTextChanged", function() refresh() end)
 frame.search = search
@@ -59,13 +62,26 @@ end)
 categoryMenu:SetPoint("LEFT", filterMenu, "RIGHT", 8, 0)
 frame.categoryMenu = categoryMenu
 
+-- Whose notes: yours, the guild's (players with a guildmate's note), or both
+local SOURCES = {{"All notes", "all"}, {"My notes", "mine"}, {"Guild notes", "guild"}}
+local source = "all"
+local function isSource(v) return v == source end
+local function setSource(v) source = v; refresh() end
+local sourceMenu = St.MenuButton(body, 100, function()
+    for _, e in ipairs(SOURCES) do if isSource(e[2]) then return e[1] end end
+end, function(root)
+    for _, e in ipairs(SOURCES) do root:CreateRadio(e[1], isSource, setSource, e[2]) end
+end)
+sourceMenu:SetPoint("LEFT", categoryMenu, "RIGHT", 8, 0)
+frame.sourceMenu = sourceMenu
+
 local addButton = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
 addButton:SetPoint("TOPRIGHT", -PAD, -PAD - 3)
 addButton:SetSize(90, 22)
 addButton:SetText("Add note")
 local nameBox = CreateFrame("EditBox", nil, body, "InputBoxTemplate")
 nameBox:SetPoint("RIGHT", addButton, "LEFT", -10, 0)
-nameBox:SetSize(180, 20)
+nameBox:SetSize(140, 20)
 nameBox:SetAutoFocus(false)
 local namePrompt = Text(nameBox, "GameFontDisable")
 namePrompt:SetPoint("LEFT", 2, 0)
@@ -157,26 +173,50 @@ local rows = {}
 frame.rows = rows
 local BLOCKED_MARK = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:14:14|t " -- Blizzard's red loot-pass cross
 
-local function pick(key)
+local tab = "mine" -- the detail shows "mine" (your note) or "guild" (the guild's notes)
+-- name: a player with only guild notes gets a draft note of yours, saved once something is written in it
+local function pick(key, name)
     if key == selected then return end
-    N.prune(key and N.people()[key]) -- a note left with neither stars nor text goes
+    local had = key and N.people()[key]
+    N.prune(had) -- a note left with neither stars nor text goes
+    draft = not had and key and name and {key = key, name = name, note = "", updated = time()} or nil
     selected = key
+    tab = had and "mine" or "guild" -- only the guild's notes on them: those first
     refresh()
     showEditor()
 end
 
--- the notes under the search and rating filter, sorted
+-- the notes under the search, filters and Mine / Guild / All, sorted. A player with only guild notes stands in with
+-- the guild's average for a rating and its newest note's time.
 local function noteList()
     local query = (search:GetText() or ""):lower()
     local shown = {}
-    for key, e in pairs(N.people()) do
+    local function add(key, e, guild, avg)
         local rated = ratingFilter == "all" or (ratingFilter == -1 and not e.rating) or e.rating == ratingFilter
             or (ratingFilter == "blocked" and e.block)
         local tagged = categoryFilter == 0 or (categoryFilter == -1 and not next(e.tags or {}))
             or (e.tags and e.tags[categoryFilter])
         rated = rated and tagged
         local found = query == "" or e.name:lower():find(query, 1, true) or (e.note or ""):lower():find(query, 1, true)
-        if rated and found then shown[#shown + 1] = {key = key, entry = e} end
+        for _, g in ipairs(guild) do found = found or (g.note or ""):lower():find(query, 1, true) end
+        if rated and found then shown[#shown + 1] = {key = key, entry = e, guild = guild, avg = avg} end
+    end
+    local yours = {} -- your notes with something in them; an empty one isn't yours yet
+    for key, e in pairs(N.people()) do
+        local guild, avg = N.guildRating(e.name)
+        if not N.isEmpty(e) or #guild == 0 then
+            yours[key] = true
+            if source ~= "guild" or #guild > 0 then add(key, e, guild, avg) end
+        end
+    end
+    if source ~= "mine" then
+        for key, byAuthor in pairs(N.guildStore() or {}) do
+            local _, any = next(byAuthor)
+            local guild, avg = N.guildRating(any and any.player)
+            if not yours[key] and #guild > 0 then
+                add(key, {name = guild[1].player, rating = N.round(avg), updated = guild[1].at, guildOnly = true}, guild, avg)
+            end
+        end
     end
     local sortKey = SORT[sortCol][2]
     table.sort(shown, function(a, b)
@@ -193,7 +233,7 @@ end
 local function refreshList(shown)
     listNote:SetText(#shown == 1 and "1 character" or #shown .. " characters")
     for i, item in ipairs(shown) do
-        local b = rows[i] or St.ListRow(list, i, LIST_W - 32, ROW_H, function(self) pick(self.key) end)
+        local b = rows[i] or St.ListRow(list, i, LIST_W - 32, ROW_H, function(self) pick(self.key, self.name) end)
         rows[i] = b
         local e = item.entry
         b.key, b.name = item.key, e.name
@@ -201,7 +241,9 @@ local function refreshList(shown)
         b.count:SetText(N.stars(e.rating, 11))
         local line = firstLine(e.note)
         local tags = N.tagsText(e)
-        if tags ~= "" and line ~= "" then b.sub:SetText(tags .. "  |cff999999" .. line .. "|r")
+        if e.guildOnly then b.sub:SetText(N.guildText(#item.guild, item.avg))
+        elseif tags ~= "" and line ~= "" then b.sub:SetText(tags .. "  |cff999999" .. line .. "|r")
+        elseif tags == "" and line == "" and #item.guild > 0 then b.sub:SetText(N.guildText(#item.guild, item.avg))
         else b.sub:SetText(tags ~= "" and tags or line ~= "" and line or "No note") end
         b.each:SetText(stamp(e.updated))
         b:SetPicked(item.key == selected)
@@ -219,7 +261,7 @@ editor:SetPoint("BOTTOMRIGHT", -PAD, PAD)
 frame.editor = editor
 local who = Text(editor, "GameFontNormalLarge")
 who:SetPoint("TOPLEFT", 12, -12)
-who:SetPoint("RIGHT", -12, 0)
+who:SetPoint("RIGHT", -250, 0)
 local when = Text(editor, "GameFontDisableSmall")
 when:SetPoint("TOPLEFT", who, "BOTTOMLEFT", 0, -4)
 local emptyText = Text(editor, "GameFontDisable")
@@ -233,9 +275,21 @@ local ratingLabel = Text(editor, "GameFontNormal")
 ratingLabel:SetPoint("TOPLEFT", 12, -62)
 ratingLabel:SetText("Rating")
 local starButtons = {}
-local function entry() return selected and N.people()[selected] end
-local function setRating(r)
+local function entry()
+    if not selected then return nil end
+    return N.people()[selected] or (draft and draft.key == selected and draft) or nil
+end
+-- the note to write in: a draft becomes yours here
+local function edit()
     local e = entry()
+    if e == draft and e then
+        N.people()[selected] = e
+        e.key, draft = nil, nil
+    end
+    return e
+end
+local function setRating(r)
+    local e = edit()
     if not e then return end
     e.rating = r
     N.touch(e)
@@ -381,9 +435,10 @@ local function saveEdit()
     if editing.id then
         local c = ns.db.notes.categories[editing.id]
         c.name, c.color = name, editing.color
+        N.changed()
     else
         local id = N.addCategory(name, editing.color)
-        local e = selected and N.people()[selected]
+        local e = edit()
         if e then -- a new category goes on the character it was made for
             e.tags = e.tags or {}
             e.tags[id] = true
@@ -419,6 +474,7 @@ local function categoryMenuFor(chip)
             local c = ns.db.notes.categories[id]
             pickColor(c.color, function(color)
                 c.color = color
+                N.changed()
                 refresh()
                 layoutCategories()
             end)
@@ -434,7 +490,7 @@ end
 
 -- Lays the chips out in rows across the block, then the name box, and sizes the block to fit
 function layoutCategories()
-    local e = selected and N.people()[selected]
+    local e = entry()
     local list = N.categoryList()
     local x, y = 0, -22
     local function place(b, w)
@@ -479,7 +535,7 @@ end
 function chipClick(b, button)
     if b.isNew then return startEdit(nil) end
     if button == "RightButton" then return categoryMenuFor(b) end
-    local e = selected and N.people()[selected]
+    local e = edit()
     if not e then return end
     e.tags = e.tags or {}
     e.tags[b.id] = (not e.tags[b.id]) or nil
@@ -524,7 +580,7 @@ local addDungeon = St.MenuButton(dungeons, 110, function() return "Add dungeon" 
     root:CreateTitle("Played together")
     for _, d in ipairs(N.DUNGEONS) do
         root:CreateButton(d[2], function()
-            local e = entry()
+            local e = edit()
             if not e then return end
             N.addDungeon(e, d[2])
             N.touch(e)
@@ -617,12 +673,30 @@ noteEdit:SetWidth(EDITOR_W - 60)
 noteScroll:SetScrollChild(noteEdit)
 noteEdit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 noteEdit:SetScript("OnTextChanged", function(self, userInput)
-    local e = entry()
-    if not (userInput and e) then return end
+    if not userInput then return end
+    local e = edit()
+    if not e then return end
     e.note = self:GetText()
     N.touch(e)
     refresh()
 end)
+-- Private: kept out of the guild's notes (shown while sharing is on)
+local privateBox = CreateFrame("CheckButton", nil, editor, "UICheckButtonTemplate")
+privateBox:SetSize(24, 24)
+privateBox:SetPoint("LEFT", noteHint, "RIGHT", 12, 0)
+privateBox.Text:SetText("Private")
+privateBox.Text:SetFontObject("GameFontHighlight")
+privateBox:SetScript("OnClick", function(self)
+    local e = edit()
+    if not e then return end
+    e.private = self:GetChecked() and true or nil
+    N.touch(e)
+end)
+privateBox:SetScript("OnEnter", function(self)
+    St.Tooltip(self, "Private", {"Keeps this note to yourself: it isn't shared with your guild."})
+end)
+privateBox:SetScript("OnLeave", function() GameTooltip:Hide() end)
+frame.privateBox = privateBox
 noteBox:EnableMouse(true)
 noteBox:SetScript("OnMouseDown", function() noteEdit:SetFocus() end) -- a click anywhere in the box writes
 frame.noteEdit = noteEdit
@@ -637,6 +711,7 @@ StaticPopupDialogs.KUREQUTILS_DELETE_NOTE = {
     OnAccept = function()
         if not (deleting and ns.IsOn("notes")) then return end
         N.people()[deleting] = nil
+        N.changed()
         if selected == deleting then selected = nil end
         deleting = nil
         refresh()
@@ -645,7 +720,7 @@ StaticPopupDialogs.KUREQUTILS_DELETE_NOTE = {
     timeout = 0, whileDead = true, hideOnEscape = true,
 }
 deleteButton:SetScript("OnClick", function()
-    local e = entry()
+    local e = selected and N.people()[selected]
     if not e then return end
     deleting = selected
     StaticPopup_Show("KUREQUTILS_DELETE_NOTE", e.name)
@@ -684,17 +759,109 @@ for _, b in ipairs(N.BLOCKS) do
 end
 frame.blockBoxes = blockBoxes
 
+-- Your note / Guild notes: tabs at the top right of the detail; your note comes first
+local tabs = {}
+tabs.guild = TextTab(editor, function() tab = "guild"; showEditor() end)
+tabs.guild:SetPoint("TOPRIGHT", -6, -8)
+tabs.mine = TextTab(editor, function() tab = "mine"; showEditor() end)
+tabs.mine:SetPoint("RIGHT", tabs.guild, "LEFT", 0, 0)
+frame.tabs = tabs
+
+-- The guild's notes on the chosen player, read-only, newest first: the author and their stars, the date (and "passed
+-- along" when it didn't come from its author), the author's categories in their colors, then the note.
+local GUILD_W = EDITOR_W - 60
+local guildScroll = CreateFrame("ScrollFrame", nil, editor, "ScrollFrameTemplate")
+guildScroll:SetPoint("TOPLEFT", 12, -62)
+guildScroll:SetPoint("BOTTOMRIGHT", -32, 12)
+local guildList = CreateFrame("Frame", nil, guildScroll)
+guildList:SetSize(GUILD_W, 1)
+guildScroll:SetScrollChild(guildList)
+local guildEmpty = Text(editor, "GameFontDisable")
+guildEmpty:SetPoint("CENTER")
+guildEmpty:SetWidth(360)
+guildEmpty:SetWordWrap(true)
+guildEmpty:SetJustifyH("CENTER")
+local guildRows = {}
+frame.guildRows, frame.guildEmpty = guildRows, guildEmpty
+local function guildRow(i)
+    local r = guildRows[i]
+    if r then return r end
+    r = CreateFrame("Frame", nil, guildList)
+    r:SetWidth(GUILD_W)
+    r.head = Text(r, "GameFontHighlight")
+    r.head:SetPoint("TOPLEFT", 0, 0)
+    r.date = Text(r, "GameFontDisableSmall")
+    r.date:SetPoint("TOPRIGHT", 0, -1)
+    r.cats = Text(r, "GameFontHighlightSmall")
+    r.cats:SetPoint("TOPLEFT", r.head, "BOTTOMLEFT", 0, -4)
+    r.cats:SetWidth(GUILD_W)
+    r.cats:SetJustifyH("LEFT")
+    r.note = Text(r, "GameFontHighlightSmall")
+    r.note:SetWidth(GUILD_W)
+    r.note:SetJustifyH("LEFT")
+    r.note:SetWordWrap(true)
+    r.line = Line(r)
+    r.line:SetPoint("BOTTOMLEFT", 0, 0)
+    r.line:SetPoint("BOTTOMRIGHT", 0, 0)
+    guildRows[i] = r
+    return r
+end
+local function layoutGuild(name)
+    local list = N.guildNotes(name)
+    local y = 0
+    for i, g in ipairs(list) do
+        local r = guildRow(i)
+        r:ClearAllPoints()
+        r:SetPoint("TOPLEFT", 0, -y)
+        r.head:SetText(g.author .. (g.rating and "  " .. N.stars(g.rating, 12) .. " " .. N.WORDS[g.rating] or ""))
+        r.date:SetText(stamp(g.at, true) .. (g.relay and " · passed along" or ""))
+        local tags = N.guildTagsText(g)
+        r.cats:SetText(tags)
+        r.note:ClearAllPoints()
+        r.note:SetPoint("TOPLEFT", tags ~= "" and r.cats or r.head, "BOTTOMLEFT", 0, -4)
+        r.note:SetText(g.note or "")
+        local h = 16 + (tags ~= "" and 16 or 0) + math.ceil(r.note:GetStringHeight()) + 12
+        r:SetHeight(h)
+        r:Show()
+        y = y + h + 8
+    end
+    for i = #list + 1, #guildRows do guildRows[i]:Hide() end
+    guildList:SetHeight(math.max(1, y))
+    guildEmpty:SetText(ns.db.notes.share and "No guild notes on " .. name .. " yet."
+        or "No guild notes on " .. name .. ". Turn on Share guild notes in the settings to share notes with your guild.")
+    guildEmpty:SetShown(#list == 0)
+    return #list
+end
+
 function showEditor()
     local e = entry()
-    for _, part in ipairs({who, when, ratingLabel, ratingWord, cats, dungeons, noteLabel, noteHint, noteBox, deleteButton, blockLabel}) do
-        part:SetShown(e ~= nil)
+    local count = e and #N.guildNotes(e.name) or 0
+    local mine = e ~= nil and tab == "mine"
+    for _, part in ipairs({ratingLabel, ratingWord, cats, dungeons, noteLabel, noteHint, noteBox, deleteButton, blockLabel}) do
+        part:SetShown(mine)
     end
-    for _, b in ipairs(starButtons) do b:SetShown(e ~= nil) end
-    zeroButton:SetShown(e ~= nil)
-    for _, b in pairs(blockBoxes) do b:SetShown(e ~= nil) end
+    who:SetShown(e ~= nil)
+    when:SetShown(e ~= nil)
+    for _, b in ipairs(starButtons) do b:SetShown(mine) end
+    zeroButton:SetShown(mine)
+    for _, b in pairs(blockBoxes) do b:SetShown(mine) end
+    privateBox:SetShown(mine and ns.db.notes.share == true)
+    tabs.mine:SetShown(e ~= nil)
+    tabs.guild:SetShown(e ~= nil)
+    guildScroll:SetShown(e ~= nil and not mine)
+    guildEmpty:SetShown(false)
     emptyText:SetShown(e == nil)
     if not e then return end
+    tabs.mine:Set("Your note", mine)
+    tabs.guild:Set(count > 0 and "Guild notes (" .. count .. ")" or "Guild notes", not mine)
     who:SetText(N.colored(e))
+    if not mine then
+        local _, avg = N.guildRating(e.name)
+        when:SetText(count > 0 and N.guildText(count, avg) or "No guild notes")
+        layoutGuild(e.name)
+        return
+    end
+    privateBox:SetChecked(e.private == true)
     when:SetText("Updated " .. stamp(e.updated, true))
     for r, b in ipairs(starButtons) do
         local on = e.rating and r <= e.rating
@@ -742,6 +909,7 @@ function refresh()
     if not ns.db.notes.categories[categoryFilter] and categoryFilter > 0 then categoryFilter = 0 end
     filterMenu:Refresh()
     categoryMenu:Refresh()
+    sourceMenu:Refresh()
     refreshTiles()
     refreshList(noteList())
 end
@@ -757,6 +925,7 @@ N.open = ns.whenOn("notes", function(name)
     if name then
         local e = N.ensure(name)
         selected = N.key(e.name)
+        tab = "mine"
         search:SetText("") -- so it shows in the list
         ratingFilter = "all"
     end

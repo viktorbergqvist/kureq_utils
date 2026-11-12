@@ -20,6 +20,8 @@ local frame, body = St.Window("KureqLoadoutsFrame", "Loadouts", W, H)
 local selected -- the loadout shown on the right: a saved one's id, or a backup (its table)
 local tab = "bars"
 local refresh
+-- saves a name or setting still being typed in the editor (LoadoutsEditor.lua), before acting on the loadout
+local function flush() if L.ui and L.ui.commitPending then L.ui.commitPending() end end
 
 local function stamp(t) return t and date("%d %b %Y, %H:%M", t) or "-" end
 local function classColor(class)
@@ -248,11 +250,15 @@ for _, bar in ipairs(BARS) do
         b.icon:SetPoint("TOPLEFT", 2, -2)
         b.icon:SetPoint("BOTTOMRIGHT", -2, 2)
         b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        b.slot = slot
         b:SetScript("OnEnter", function(self)
-            if not (self.what or self.changed) then return end
+            if not (self.what or self.changed or self.editable) then return end
             local lines = {("%s, slot %d"):format(bar[2], i)}
             if self.waiting then lines[#lines + 1] = "You don't know it yet: it goes on when you learn it." end
             if self.changed then lines[#lines + 1] = self.what and "Loading puts it on your bar." or "Loading empties this slot." end
+            if self.editable then -- LoadoutsEditor.lua
+                lines[#lines + 1] = "|cff999999Drop a spell, item or macro here. Drag to move it, right-click for more.|r"
+            end
             St.Tooltip(self, self.what or "Empty", lines)
         end)
         b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -262,12 +268,17 @@ for _, bar in ipairs(BARS) do
 end
 frame.icons = icons
 
--- Macros, Bindings and Settings: lines of an optional icon, a gold label and a white value
+-- Macros, Bindings and Settings: lines of an optional icon, a gold label and a white value; data is what the line
+-- shows (a macro's index, {command, key}, a setting's name), for the editor
 local lines = {}
-local function setLine(i, icon, label, value)
+local function setLine(i, icon, label, value, data)
     local r = lines[i]
     if not r then
-        r = CreateFrame("Frame", nil, content)
+        r = CreateFrame("Button", nil, content)
+        r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        local hl = r:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(1, 1, 1, 0.08)
         r:SetSize(CONTENT_W, LINE_H)
         r:SetPoint("TOPLEFT", 0, -(SUMMARY_H + (i - 1) * LINE_H))
         r.icon = r:CreateTexture(nil, "ARTWORK")
@@ -286,6 +297,7 @@ local function setLine(i, icon, label, value)
     r.label:SetWidth(icon and 160 or 184)
     r.label:SetText(label)
     r.value:SetText(value)
+    r.data = data
     r:Show()
 end
 frame.lines = lines
@@ -373,6 +385,7 @@ for i, p in ipairs(PARTS) do
 end
 frame.loadDialog, frame.partBoxes = loadDialog, boxes
 loadDialog.ok:SetScript("OnClick", function()
+    flush()
     loadDialog:Hide()
     if not (loading and ns.IsOn("loadouts")) then return end
     local parts = {}
@@ -437,6 +450,7 @@ importButton:SetScript("OnClick", function()
         "Paste a loadout's text below (Ctrl+V) and click Import. You can look it over before you load it.")
 end)
 exportButton:SetScript("OnClick", function()
+    flush()
     local lo, isBackup = chosen()
     if not lo or isBackup then return end
     openShare(L.export(lo), "Export " .. lo.name,
@@ -463,6 +477,7 @@ local function confirm(which, text, fn)
 end
 
 loadButton:SetScript("OnClick", function()
+    flush()
     local lo, isBackup = chosen()
     if not lo or isBackup then return end
     loading = lo
@@ -482,6 +497,7 @@ restoreButton:SetScript("OnClick", function()
         function(backup) load(backup, backup.parts or L.ALL, "Restored") end)
 end)
 updateButton:SetScript("OnClick", function()
+    flush()
     local lo, isBackup = chosen()
     if not lo or isBackup then return end
     asking = selected
@@ -495,6 +511,7 @@ updateButton:SetScript("OnClick", function()
     end)
 end)
 deleteButton:SetScript("OnClick", function()
+    flush()
     local lo, isBackup = chosen()
     if not lo or isBackup then return end
     asking = selected
@@ -524,14 +541,16 @@ local function iconOf(lo, a)
     return 134400, a.type .. " (not loaded)"
 end
 
-local function showBars(lo)
+local function showBars(lo, editable)
     local p = L.preview(lo)
     local shown = 0
     for _, bar in ipairs(BARS) do
         local row, first = barRows[bar[1]], (bar[1] - 1) * 12
         local any = false
         for slot = first + 1, first + 12 do any = any or lo.actions[slot] ~= nil end
+        any = any or editable -- a saved loadout shows every bar, to drop things on
         row:SetShown(any)
+        for slot = first + 1, first + 12 do icons[slot].editable = editable end
         if any then
             shown = shown + 1
             row:ClearAllPoints()
@@ -546,14 +565,14 @@ local function showBars(lo)
                     b.what = nil
                 end
                 b.icon:SetShown(a ~= nil)
-                b.changed, b.waiting = p.changed[slot], p.waiting[slot]
+                b.changed, b.waiting, b.editable = p.changed[slot], p.waiting[slot], editable
                 b:SetBackdropBorderColor(GOLD[1], GOLD[2], GOLD[3], b.changed and 1 or 0)
                 b.icon:SetDesaturated(b.waiting == true) -- a spell you don't know yet: it would wait
                 b.icon:SetAlpha(b.waiting and 0.45 or 1)
             end
         end
     end
-    local text = shown == 0 and "No action bars saved." or ("%s, %s. Gold edges change your bars; dim spells wait."):format(
+    local text = not next(lo.actions) and "No action bars saved." or ("%s, %s. Gold edges change your bars; dim spells wait."):format(
         count(p.changes, "slot changes", "slots change"), count(p.waits, "spell waits until learned", "spells wait until learned"))
     local _, class = UnitClass("player")
     if lo.class and class and lo.class ~= class then
@@ -564,29 +583,33 @@ local function showBars(lo)
 end
 
 local function bindingName(command)
+    local macro = command:match("^MACRO (.+)$")
+    if macro then return "Macro: " .. macro end
     return GetBindingName and GetBindingName(command) or _G["BINDING_NAME_" .. command] or command
 end
 local function showLines(lo)
     local n = 0
     local function add(...) n = n + 1; setLine(n, ...) end
     if tab == "macros" then
-        for _, m in ipairs(lo.macros) do add(m.icon or 134400, m.name, "|cff999999" .. (m.body or ""):match("^[^\n]*") .. "|r") end
+        for i, m in ipairs(lo.macros) do
+            add(L.iconPath(m.icon), m.name, "|cff999999" .. (m.body or ""):match("^[^\n]*") .. "|r", i)
+        end
         summary:SetText(n == 0 and "No character macros saved."
             or count(n, "macro", "macros") .. ". Loading replaces your macros with the same names and keeps the others.")
     elseif tab == "bindings" then
         local keys = {}
         for command, ks in pairs(lo.bindings) do
-            for _, key in pairs(ks) do keys[#keys + 1] = {GetBindingText and GetBindingText(key) or key, command} end
+            for _, key in pairs(ks) do keys[#keys + 1] = {GetBindingText and GetBindingText(key) or key, command, key} end
         end
         table.sort(keys, function(a, b) return a[1] < b[1] end)
-        for _, k in ipairs(keys) do add(nil, k[1], bindingName(k[2])) end
+        for _, k in ipairs(keys) do add(nil, k[1], bindingName(k[2]), {k[2], k[3]}) end
         summary:SetText(n == 0 and "No key bindings saved."
             or count(n, "key", "keys") .. " bound. Loading unbinds the keys this loadout doesn't use.")
     else
         local names = {}
         for name in pairs(lo.cvars) do names[#names + 1] = name end
         table.sort(names)
-        for _, name in ipairs(names) do add(nil, name, lo.cvars[name]) end
+        for _, name in ipairs(names) do add(nil, L.settingName(name), lo.cvars[name], name) end
         summary:SetText(count(n, "interface setting", "interface settings")
             .. " changed from the defaults (Game and Combat settings).")
     end
@@ -602,19 +625,20 @@ local function refreshDetail()
     for _, b in ipairs({loadButton, updateButton, exportButton, deleteButton}) do b:SetShown(lo ~= nil and not isBackup) end
     restoreButton:SetShown(isBackup == true)
     emptyText:SetShown(lo == nil)
-    if not lo then return end
+    if not lo then return L.ui.decorate and L.ui.decorate(tab, nil, true, 0) end
     if not renameBox:HasFocus() then renameBox:SetText(lo.name) end
     from:SetText(("%s%s|r · %s %s, %s"):format(classColor(lo.class), lo.className or "?",
         isBackup and "backup of" or "saved from", lo.from or "?", stamp(lo.updated or lo.created)))
     for _, t in ipairs(TABS) do tabs[t[1]]:Set(t[2], tab == t[1]) end
     local height
     if tab == "bars" then
-        height = showBars(lo)
+        height = showBars(lo, not isBackup)
         for _, r in ipairs(lines) do r:Hide() end
     else
         for _, row in pairs(barRows) do row:Hide() end
         height = showLines(lo)
     end
+    if L.ui.decorate then height = L.ui.decorate(tab, lo, isBackup, height) end -- the editor's controls
     content:SetHeight(SUMMARY_H + height)
 end
 
@@ -686,6 +710,11 @@ function refresh()
 end
 frame:SetScript("OnShow", refresh)
 L.changed = refresh
+
+-- What the editor (LoadoutsEditor.lua) builds on
+L.ui = {frame = frame, detail = detail, content = content, summary = summary, status = status, lines = lines,
+    CONTENT_W = CONTENT_W, SUMMARY_H = SUMMARY_H, LINE_H = LINE_H, Button = Button, Prompt = Prompt, Dialog = Dialog,
+    chosen = chosen, bindingName = bindingName, refresh = function() refresh() end}
 
 function L.toggle()
     if frame:IsShown() then frame:Hide() else frame:Show() end

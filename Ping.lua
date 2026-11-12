@@ -140,13 +140,14 @@ local function customNames()
     if db.custom then return {db.custom} end
 end
 
--- Macros can't be edited in combat; PLAYER_REGEN_ENABLED calls this again. A quest is looked up
+-- Macros can't be edited in combat; the combat queue calls this again when it ends. A quest is looked up
 -- again each time, so its finished objectives drop out. The nearby alert watches the same names.
 local function updateCustom()
     if not (db and ns.IsOn("ping")) then return end
     local names = customNames()
     if names and ns.setWatch then ns.setWatch("custom", names) end
-    if names and not InCombatLockdown() then ns.writeMacro(CUSTOM, ns.build(names)) end
+    if not names then return end
+    if InCombatLockdown() then ns.CombatQueue.Defer("ping", updateCustom) else ns.writeMacro(CUSTOM, ns.build(names)) end
 end
 
 local scheduled
@@ -161,6 +162,7 @@ end
 local panel = ns.AddSettingsPage("Ping macro",
     "These settings shape every ping macro: " .. CUSTOM .. " (/ku ping <name or quest link>) and the macros "
         .. "of companion addons.", "ping")
+ns.ping = {panel = panel} -- Alert.lua adds its settings under the ping macro's
 
 local preview
 local function refreshPreview()
@@ -298,8 +300,9 @@ end, "ping")
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
-f:RegisterEvent("PLAYER_REGEN_ENABLED")
 f:RegisterEvent("QUEST_LOG_UPDATE")
-f:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_REGEN_ENABLED" then updateCustom() else scheduleCustom() end
+f:SetScript("OnEvent", function()
+    -- combat may end before the timer: the macro then catches up as it ends
+    if InCombatLockdown() and db and ns.IsOn("ping") then ns.CombatQueue.Defer("ping", updateCustom) end
+    scheduleCustom()
 end)

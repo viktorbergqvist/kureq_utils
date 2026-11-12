@@ -114,6 +114,23 @@ you've noted, liked (4 or 5 stars) and want to avoid (0 to 2 stars).
 - **Block:** from the right-click menu, block their group invites, guild invites, trades and duels, each on its own.
   They're declined for you, with a chat line if you want one.
 
+### Guild notes
+
+Turn on **Share guild notes** on the Character notes settings page (it's off until you do) to share your notes with
+everyone in your guild who has Kureq Utils, and see theirs.
+
+- **What's shared:** stars, note text and categories. Dungeons together and blocks stay on your client.
+- **Private:** tick **Private** on a note to keep it to yourself. Deleting a note, or making it Private, removes it
+  for the guild too.
+- **One note per guildmate:** each guildmate's note sits beside yours, labelled with who wrote it; nobody can change
+  anyone else's. Notes are passed along by anyone who has them, so they reach you even when their author is offline;
+  those are marked "passed along" until the author sends them.
+- **Where they show:** the notes window (All / My / Guild notes; a player's Guild notes tab), tooltips ("Guild: 2 notes,
+  3.5 stars" and the newest note), the Looking For Group window (the guild's average when you haven't rated them) and
+  warnings (when you haven't rated them and the guild's average is 2 stars or less).
+- **Clear guild notes** removes every note you didn't write, for good: only notes written or changed after you
+  cleared them come in again.
+
 ## Loadouts
 
 Save your action bars, macros, key bindings and settings as a named loadout, and load it on any character
@@ -127,9 +144,26 @@ Save your action bars, macros, key bindings and settings as a named loadout, and
 - **Undo:** each load first saves your current setup as a backup ("Before <name>", the last 5 per character); Restore
   puts back what that load changed.
 - **Share:** Export gives one line of text to copy; paste it into Import to make a copy. Imported macros can contain
-  `/run` commands, so read them in the Macros tab before loading.
+  `/run` commands, so read them in the Macros tab before loading. A loadout with account or ready-made macros
+  needs this version or later to import.
 
 Loading never happens in combat.
+
+### Editing
+
+Change a saved loadout in its tabs; your character only changes when you load it. Edits save as you make them, and
+**Revert changes** puts the loadout back as it was when you opened the window.
+
+- **Macros:** click a macro to edit its name, icon, text (255 characters at most) and whether it's a character or an
+  account macro. **Insert** adds common pieces (`#showtooltip`, `[@mouseover,help,nodead]`, `/stopcasting`, ...),
+  **Insert spell** a spell from your spellbook, and spells you don't know are named. Right-click a macro to move or
+  delete it. **Ready-made** writes macros for you: mouseover cast, focus, cast sequence, trinkets and cast, stop
+  casting and cast, start attack and cast, pet attack or follow.
+- **Bars:** drop a spell, item or macro from your spellbook, bags or macro list on a slot (out of combat), drag a slot
+  to move it, right-click to put one of the loadout's macros there or clear it.
+- **Bindings:** click a key and press the new one (Escape cancels), right-click to clear it, or **Add a binding** for
+  the loadout's macros and buttons. A key used elsewhere in the loadout moves.
+- **Settings:** tick or type each setting's value, or remove it from the loadout.
 
 ## Ping macro and nearby alert
 
@@ -143,8 +177,9 @@ The macro only rewrites itself out of combat, and only acts when you press it. I
 targeting command (`/TargetExact` or `/target`), an optional raid marker, an action line, and whether dead targets
 are cleared.
 
-**Nearby alert** shows a message, with the raid warning sound if you want, when a mob you're after shows up on your
-nameplates. Enemy nameplates must be on (V).
+**Nearby alert**, on the same settings page, shows a message, with the raid warning sound if you want, when one of
+the macro's mobs shows up on your nameplates. It's off until you tick **Alert when nearby**. Enemy nameplates must be
+on (V).
 
 ## Commands
 
