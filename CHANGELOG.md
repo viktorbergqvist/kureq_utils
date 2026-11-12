@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6.1 (2026-11-12)
+
+### Ping macro
+
+- The preview and Nearby alert text no longer overlap on the settings page
+
 ## v1.6 (2026-11-12)
 
 ### General

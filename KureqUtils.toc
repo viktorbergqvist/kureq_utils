@@ -3,7 +3,7 @@
 ## IconTexture: Interface\Icons\INV_Misc_Gear_01
 ## Notes: Small utilities: a ping macro for a mob or a quest's mobs, a nearby alert for them, and a key that deletes the cheapest bag item you allow, with loot worth more marked while your bags are full, kill stats: every mob you kill for experience, with graphs, maps and kill XP on tooltips (/ku stats), character notes: a star rating and a note on anyone, on their tooltip, and their invites blocked if you choose (/ku note), and loadouts: save your action bars, macros, key bindings and settings and load them on another character (/ku loadouts). /ku opens the settings.
 ## Author: Kureq
-## Version: 1.6
+## Version: 1.6.1
 ## X-License: GPL-3.0
 ## X-Website: https://github.com/viktorbergqvist/kureq_utils
 ## X-Wago-ID: kGr92rKy

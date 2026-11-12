@@ -77,8 +77,8 @@ end
 
 local panel = ns.ping.panel
 ns.Header(panel, "Nearby alert")
-ns.Label(panel, "A sound and an on-screen message when the ping macro's mobs (or a companion addon's) show up "
-    .. "nearby. It uses enemy nameplates, so turn those on (V).", "GameFontDisable")
+ns.GrowingText(panel, "GameFontDisable"):SetText("A sound and an on-screen message when the ping macro's mobs (or "
+    .. "a companion addon's) show up nearby. It uses enemy nameplates, so turn those on (V).")
 
 ns.Checkbox(panel, "Alert when nearby", "Show a message when one of the watched mobs appears. Off by default.",
     function() return db and db.on end, function(v) db.on = v; if v then checkAll() end end)
@@ -89,9 +89,7 @@ ns.Checkbox(panel, "Play a sound", "Play the raid warning sound with the message
 ns.Button(panel, "Test", 100, function() show("Test mob nearby") end, "Try the alert")
 
 ns.Header(panel, "Watching")
-watchLine = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-watchLine:SetJustifyH("LEFT")
-ns.place(panel, watchLine, 0, nil, true)
+watchLine = ns.GrowingText(panel)
 watchLine:SetText("nothing yet")
 
 local f = CreateFrame("Frame")

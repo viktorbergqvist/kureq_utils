@@ -219,9 +219,7 @@ ns.Checkbox(panel, "Alt-click quests",
     function() return db and db.questClick end, function(v) db.questClick = v end)
 
 ns.Header(panel, "Preview of " .. CUSTOM)
-preview = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-preview:SetJustifyH("LEFT")
-ns.place(panel, preview, 0)
+preview = ns.GrowingText(panel) -- one line per macro line; the Nearby alert section follows it
 tinsert(panel.refreshers, refreshPreview)
 
 -- Custom target ------------------------------------------------------------------------------

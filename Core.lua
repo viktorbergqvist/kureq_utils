@@ -207,6 +207,20 @@ local function growingRow(panel, top)
     return holder
 end
 
+-- A wrapped text the page's width, in a row that grows to fit it, so what's placed after it moves down as the text
+-- gets longer (a macro preview, a list of names). Set it with :SetText as usual.
+function ns.GrowingText(panel, font)
+    local holder = growingRow(panel, panel.y)
+    local text = holder:CreateFontString(nil, "ARTWORK", font or "GameFontHighlight")
+    text:SetJustifyH("LEFT")
+    text:SetPoint("TOPLEFT", LABEL_X, 0)
+    text:SetPoint("TOPRIGHT", -LABEL_X, 0)
+    local function fit() holder:SetHeight(math.max(text:GetStringHeight() or 0, 14) + 10) end
+    hooksecurefunc(text, "SetText", fit)
+    tinsert(panel.refreshers, fit) -- the width (so the wrapping) is only known once the page shows
+    return text
+end
+
 -- A row of item icons in the control column, ending in an empty slot and wrapping onto more rows; the page
 -- below it moves down as it grows. Drop a bag item on it (or click it holding one) to add it: the item only
 -- goes back to its bag. Right-click an icon to remove it. get() returns the list, item IDs or names not found
