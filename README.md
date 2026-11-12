@@ -1,6 +1,6 @@
 # Kureq Utils
 
-Small quality-of-life utilities for **WoW Forever** (it also loads in Classic Era): kill stats with graphs and maps,
+Small quality-of-life utilities for **WoW Forever**: kill stats with graphs and maps,
 a delete key for full bags, notes and ratings on other players, loadouts you can move between characters, and a ping
 macro with a nearby alert.
 
@@ -20,7 +20,7 @@ button; right-click it for a menu of the windows). Turning a module off never de
 
 - **Wago or CurseForge:** install it with your addon client.
 - **By hand:** download the latest zip from [Releases](https://github.com/viktorbergqvist/kureq_utils/releases) and
-  unzip it into `World of Warcraft/_forever_/Interface/AddOns/` (or `_classic_era_`), so you get
+  unzip it into `World of Warcraft/_forever_/Interface/AddOns/`, so you get
   `Interface/AddOns/KureqUtils/KureqUtils.toc`. Restart the game.
 
 Then type `/ku` to see the modules and their settings.
@@ -34,7 +34,7 @@ and solo, group or all kills.
 
 ### Mobs
 
-![Kill stats: the Mobs page](media/kill-stats-mobs.png)
+![Kill stats: the Mobs page](https://raw.githubusercontent.com/viktorbergqvist/kureq_utils/main/media/kill-stats-mobs.png)
 
 Every mob you've killed, sortable by name, level, kills, total XP or XP per kill, with a search box. Pick one to see
 where you killed it on the zone map (scroll to zoom, drag to move, right-click for the whole zone), its XP range,
@@ -44,7 +44,7 @@ how often, if loot tracking is on.
 
 ### Graphs
 
-![Kill stats: the Graphs page](media/kill-stats-graphs.png)
+![Kill stats: the Graphs page](https://raw.githubusercontent.com/viktorbergqvist/kureq_utils/main/media/kill-stats-graphs.png)
 
 - **Most killed mobs.**
 - **Kill XP per character level:** where your kill experience came from as you leveled.
@@ -54,7 +54,7 @@ how often, if loot tracking is on.
 
 ### Map
 
-![Kill stats: the Map page](media/kill-stats-map.png)
+![Kill stats: the Map page](https://raw.githubusercontent.com/viktorbergqvist/kureq_utils/main/media/kill-stats-map.png)
 
 Your kills on the world map, one marker per zone sized by kill count. Click a zone to zoom in to where each kill
 happened, scroll to zoom, drag to move, and right-click to go back out. The list on the right ranks the zones.
@@ -101,7 +101,7 @@ choose **Add note**, or type `/ku note` for your target, or `/ku note Name`. All
 (`/ku notes`): search, filter by rating or category, and sort by name, rating or last updated. The tiles count how many
 you've noted, liked (4 or 5 stars) and want to avoid (0 to 2 stars).
 
-![Character notes, names hidden](media/character-notes.png)
+![Character notes, names hidden](https://raw.githubusercontent.com/viktorbergqvist/kureq_utils/main/media/character-notes.png)
 
 - **Categories:** tag people with your own colored categories ("Cool Dude", "Ninja looter", "Steals tags"…). Click
   one to set it, right-click to edit it, or make a new one.
@@ -119,7 +119,7 @@ you've noted, liked (4 or 5 stars) and want to avoid (0 to 2 stars).
 Save your action bars, macros, key bindings and settings as a named loadout, and load it on any character
 (`/ku loadouts`).
 
-![Loadouts: a saved loadout's bars](media/loadouts.png)
+![Loadouts: a saved loadout's bars](https://raw.githubusercontent.com/viktorbergqvist/kureq_utils/main/media/loadouts.png)
 
 - **Preview:** see a loadout's bars as icons before loading. Slots that would change are marked, and spells you
   don't know yet are dimmed (they're placed once you learn them).
@@ -165,4 +165,4 @@ every character can see them. Which modules are on is saved per character in `Ku
 
 ## Changelog and licence
 
-See [CHANGELOG.md](CHANGELOG.md). Licensed under GPL-3.0, see [LICENSE](LICENSE).
+See [CHANGELOG.md](https://github.com/viktorbergqvist/kureq_utils/blob/main/CHANGELOG.md). Licensed under GPL-3.0, see [LICENSE](https://github.com/viktorbergqvist/kureq_utils/blob/main/LICENSE).

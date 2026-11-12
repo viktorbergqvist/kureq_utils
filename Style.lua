@@ -51,22 +51,24 @@ function St.Line(parent, a)
     return t
 end
 
--- A switch on the character sheet's title plaque; lit when on
-function St.Plaque(parent, text, onClick)
-    local b = CreateFrame("Button", nil, parent)
-    b:SetSize(110, 28)
-    b.bg = b:CreateTexture(nil, "BACKGROUND")
-    b.bg:SetAllPoints()
-    if not b.bg:SetAtlas("UI-Character-Info-Title") then b.bg:SetColorTexture(0.25, 0.2, 0.1, 0.9) end
-    b.text = St.Text(b, "GameFontNormal")
-    b.text:SetPoint("CENTER", 0, 1)
-    b.text:SetText(text)
+-- A page tab hanging under the window, as on Forever's own windows (Blizzard's PanelTabButtonTemplate): dark, the
+-- chosen one lit gold. Tabs line up left to right in the order they're made.
+function St.Tab(window, text, onClick)
+    window.tabPadding, window.minTabWidth = window.tabPadding or 20, window.minTabWidth or 90
+    local b = CreateFrame("Button", nil, window, "PanelTabButtonTemplate")
+    b:SetText(text)
     b:SetScript("OnClick", onClick)
+    window.kuTabs = window.kuTabs or {}
+    local prev = window.kuTabs[#window.kuTabs]
+    if prev then b:SetPoint("LEFT", prev, "RIGHT", 3, 0) else b:SetPoint("TOPLEFT", window, "BOTTOMLEFT", 11, 2) end
+    window.kuTabs[#window.kuTabs + 1] = b
+    if PanelTemplates_TabResize and type(b.Text) == "table" then
+        PanelTemplates_TabResize(b, window.tabPadding, nil, window.minTabWidth)
+    end
     function b:SetOn(on)
         self.on = on
-        self.bg:SetDesaturated(not on)
-        self.bg:SetAlpha(on and 1 or 0.7)
-        self.text:SetFontObject(on and "GameFontHighlight" or "GameFontNormal")
+        if type(self.LeftActive) ~= "table" then return end -- test stubs have no template parts
+        if on then PanelTemplates_SelectTab(self) else PanelTemplates_DeselectTab(self) end
     end
     return b
 end

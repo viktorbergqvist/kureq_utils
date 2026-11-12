@@ -1,5 +1,5 @@
 -- The kill stats window (Stats.lua), in the look of the character sheet and Road to Sixty: dark panes with the tooltip border on
--- the character sheet's background, gold plaques to switch between Mobs and Graphs, a row of stat tiles, and below
+-- the character sheet's background, page tabs under the window (Mobs, Graphs, Map, Deaths), a row of stat tiles, and below
 -- either the mob list beside the chosen mob's map and numbers, or four charts. Every number follows the search
 -- (list only), zone and Solo / Group filters.
 local _, ns = ...
@@ -16,7 +16,7 @@ local LIST_W, ROW_H = 330, 34
 local MAP_W, MAP_H = 330, 220
 local DETAIL_W = BW - 2 * PAD - LIST_W - GAP -- the pane right of the list
 local GOLD, commas = St.GOLD, St.commas
-local Pane, Text, Line, Plaque, TextTab, Tooltip = St.Pane, St.Text, St.Line, St.Plaque, St.TextTab, St.Tooltip
+local Pane, Text, Line, TextTab, Tooltip = St.Pane, St.Text, St.Line, St.TextTab, St.Tooltip
 local function short(n) return n >= 10000 and ("%.1fk"):format(n / 1000) or commas(n) end
 local function signed(n) return n > 0 and "+" .. n or tostring(n) end
 local function each(xp, count) return count > 0 and math.floor(xp / count + 0.5) or 0 end
@@ -36,12 +36,10 @@ local page = "mobs" -- or "graphs"
 local refresh
 local V -- the data shown: S.view(), set at each refresh
 
--- Top bar: Mobs and Graphs plaques, then the search, zone and Solo / Group filters
+-- Page tabs under the window; the top bar holds the character, zone and Solo / Group filters
 local plaques = {}
 for i, p in ipairs({{"Mobs", "mobs"}, {"Graphs", "graphs"}, {"Map", "map"}, {"Deaths", "deaths"}}) do
-    local b = Plaque(body, p[1], function() page = p[2]; refresh() end)
-    b:SetWidth(90)
-    b:SetPoint("TOPLEFT", PAD + (i - 1) * 94, -PAD)
+    local b = St.Tab(frame, p[1], function() page = p[2]; refresh() end)
     b.page = p[2]
     plaques[i] = b
 end
