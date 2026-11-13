@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.7.2 (2026-11-13)
+
+### Delete items
+
+- Name rules can match text in the item's tooltip (Tooltip has "Classes: Mage" for mage scrolls)
+- Tooltip rules never error in combat; an unreadable tooltip keeps the item
+
 ## v1.7.1 (2026-11-13)
 
 ### Settings

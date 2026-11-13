@@ -28,8 +28,18 @@ function M.db() return db end
 
 -- Matching ---------------------------------------------------------------------------------------------------------
 
-local function anyName(rules, name)
-    for _, r in ipairs(rules or {}) do if ns.delete.ruleMatches(r, name) then return true end end
+-- a "Tooltip has" rule reads the item's bag slot's tooltip, once; unknown: what it counts as when the tooltip can't be
+-- read (Never send: true, so nothing it might cover goes; a rule: false)
+local function anyName(rules, item, unknown)
+    local tip = function()
+        if item.tipRead == nil then item.tip, item.tipRead = ns.delete.tooltipText(item.bag, item.slot), true end
+        return item.tip
+    end
+    for _, r in ipairs(rules or {}) do
+        local hit = ns.delete.ruleMatches(r, item.name, tip)
+        if hit == nil then hit = unknown end
+        if hit then return true end
+    end
     return false
 end
 
@@ -52,7 +62,7 @@ function M.match(rule, item)
         end
         if not hit then return false end
     end
-    if #names > 0 and not anyName(names, item.name) then return false end
+    if #names > 0 and not anyName(names, item, false) then return false end
     if next(rule.qualities or {}) and not rule.qualities[item.quality or -1] then return false end
     return true
 end
@@ -79,7 +89,7 @@ function M.plan(items, rules, never, neverRules, me)
     local out, byKey = {}, {}
     for _, it in ipairs(items) do
         local kept = it.bound or it.quest or it.locked or it.unmailable or it.class == QUEST
-            or neverSet[it.id] or neverSet[it.name:lower()] or anyName(neverRules, it.name)
+            or neverSet[it.id] or neverSet[it.name:lower()] or anyName(neverRules, it, true)
         for _, rule in ipairs(kept and {} or rules) do
             if not M.problem(rule) and not M.isMe(rule.to, me) and M.match(rule, it) then
                 -- first match wins, also when keeping back holds this stack

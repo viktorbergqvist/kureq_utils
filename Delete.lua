@@ -147,10 +147,35 @@ local function validPattern(p)
     return true
 end
 
--- Starts with, ends with and contains are plain text in any case; a pattern is a Lua pattern on the name as shown.
+-- The text of a bag item's tooltip, lowercased, its lines joined by new lines; nil when it can't be read: in combat
+-- (tooltip data may be restricted then), a secret value, an error, or a client without C_TooltipInfo.
+local function secret(v) return issecretvalue ~= nil and issecretvalue(v) end
+local function tooltipText(bag, slot)
+    if not (bag and C_TooltipInfo and C_TooltipInfo.GetBagItem) or InCombatLockdown() then return nil end
+    local ok, text = pcall(function()
+        local data = C_TooltipInfo.GetBagItem(bag, slot)
+        if not data or secret(data) or secret(data.lines) then return nil end
+        local lines = {}
+        for _, line in ipairs(data.lines or {}) do
+            if secret(line.leftText) or secret(line.rightText) then return nil end
+            lines[#lines + 1] = (line.leftText or "") .. " " .. (line.rightText or "")
+        end
+        return table.concat(lines, "\n"):lower()
+    end)
+    return ok and text or nil
+end
+
+-- Starts with, ends with and contains are plain text in any case; a pattern is a Lua pattern on the name as shown;
+-- "tooltip" is plain text anywhere in the item's tooltip ("Classes: Mage"), read by tip() (lowercased); when the
+-- tooltip can't be read it returns nil (unknown), and the caller decides (a Never rule keeps, an Allow rule doesn't).
 -- A pattern shown as invalid never matches (Lua would search some, such as ")", as plain text).
-local function ruleMatches(rule, name)
+local function ruleMatches(rule, name, tip)
     local text = rule.text
+    if rule.kind == "tooltip" then
+        local t = tip and tip()
+        if t == nil then return nil end
+        return t:find(text:lower(), 1, true) ~= nil
+    end
     if rule.kind == "pattern" then
         if not validPattern(text) then return false end
         local ok, hit = pcall(string.find, name, text)
@@ -162,10 +187,23 @@ local function ruleMatches(rule, name)
     return name:find(text, 1, true) ~= nil
 end
 
-ns.delete = {validPattern = validPattern, ruleMatches = ruleMatches}
+ns.delete = {validPattern = validPattern, ruleMatches = ruleMatches, tooltipText = tooltipText}
 
-local function anyRule(rules, name)
-    for _, r in ipairs(rules) do if ruleMatches(r, name) then return true end end
+-- tip: the bag slot's tooltip text, read only when a tooltip rule needs it, once
+local function slotTip(bag, slot)
+    local text, read
+    return function()
+        if not read then text, read = tooltipText(bag, slot), true end
+        return text
+    end
+end
+-- unknown: what a rule whose answer is unknown (an unreadable tooltip) counts as
+local function anyRule(rules, name, tip, unknown)
+    for _, r in ipairs(rules) do
+        local hit = ruleMatches(r, name, tip)
+        if hit == nil then hit = unknown end
+        if hit then return true end
+    end
     return false
 end
 
@@ -272,8 +310,9 @@ local function cheapest()
                     local key = name:lower()
                     price, count = price or 0, count or 1
                     local value = price * count
-                    local keep = never[id] or never[key] or anyRule(db.neverRules, name)
-                    local allowed = not keep and (always[id] or always[key] or anyRule(db.alwaysRules, name) or (
+                    local tip = slotTip(bag, slot)
+                    local keep = never[id] or never[key] or anyRule(db.neverRules, name, tip, true)
+                    local allowed = not keep and (always[id] or always[key] or anyRule(db.alwaysRules, name, tip, false) or (
                         (quality or 0) <= db.maxQuality
                         and (price > 0 or db.unsellable)
                         and not (db.keepQuest and (classID == QUEST_ITEM or bindType == 4 or questSlot(bag, slot)))
@@ -501,9 +540,11 @@ ns.EditBox(panel, "Max stack value",
 
 ns.Header(panel, "Lists")
 
-local KINDS = {{"starts", "Starts with"}, {"ends", "Ends with"}, {"contains", "Contains"}, {"pattern", "Pattern"}}
+local KINDS = {{"starts", "Starts with"}, {"ends", "Ends with"}, {"contains", "Contains"}, {"pattern", "Pattern"},
+    {"tooltip", "Tooltip has"}}
 local KIND_HELP = "Starts with, Ends with and Contains: plain text, any case. Pattern: a Lua pattern on the name, "
-    .. "case-sensitive, e.g. Page %d+$ for names that end in a page number."
+    .. "case-sensitive, e.g. Page %d+$ for names that end in a page number. Tooltip has: plain text anywhere in the "
+    .. "item's tooltip, any case, e.g. Classes: Mage."
 ns.delete.KINDS, ns.delete.KIND_HELP = KINDS, KIND_HELP -- Mail rules' name rules too
 for _, l in ipairs({
     {"never", LIST_NAME.never, "Always kept, whatever the rules say.", "are always kept."},
