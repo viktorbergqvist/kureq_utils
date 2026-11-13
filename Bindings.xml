@@ -1,3 +1,9 @@
 <Bindings>
     <Binding name="CLICK KureqUtilsDeleteButton:LeftButton" header="KUREQUTILS" category="BINDING_HEADER_KUREQUTILS" />
+    <Binding name="KUREQUTILS_STATS" category="BINDING_HEADER_KUREQUTILS">KureqUtils.Toggle("stats")</Binding>
+    <Binding name="KUREQUTILS_NOTES" category="BINDING_HEADER_KUREQUTILS">KureqUtils.Toggle("notes")</Binding>
+    <Binding name="KUREQUTILS_LOADOUTS" category="BINDING_HEADER_KUREQUTILS">KureqUtils.Toggle("loadouts")</Binding>
+    <Binding name="KUREQUTILS_MACRO" category="BINDING_HEADER_KUREQUTILS">KureqUtils.Toggle("macro")</Binding>
+    <Binding name="KUREQUTILS_MAIL" category="BINDING_HEADER_KUREQUTILS">KureqUtils.Toggle("mail")</Binding>
+    <Binding name="KUREQUTILS_SETTINGS" category="BINDING_HEADER_KUREQUTILS">KureqUtils.Toggle("settings")</Binding>
 </Bindings>

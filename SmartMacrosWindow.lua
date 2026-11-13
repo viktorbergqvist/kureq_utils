@@ -1,7 +1,7 @@
 -- The Macros window's fourth page, Smart macros (SmartMacros.lua, Ping.lua, Alert.lua): one row per smart macro on the
 -- left (its icon, name, an On tick and what it uses now), and the chosen one on the right: what it does, its own
 -- settings, the text it writes now (read-only), its icon to drag to a bar and Update now. The settings are the same
--- saved ones as before (per character in KureqUtilsCharDB.smartMacros, KU Ping's account-wide in KureqUtilsDB.ping
+-- saved ones (account-wide in KureqUtilsDB.smartMacros, KU Ping's in KureqUtilsDB.ping
 -- and KureqUtilsDB.alert); every rule of writing the macros stays in SmartMacros.lua and Ping.lua.
 local _, ns = ...
 local M, L, St, C = ns.macros, ns.loadouts, ns.style, ns.macroCode
@@ -30,7 +30,7 @@ local function setOn(kind, v)
     if kind == "ping" then return P.setOn(v) end
     SM.change(function(s)
         s.on[kind] = v or nil
-        if v then SM.adopt(s.made, kind, SM.NAMES[kind], false) end
+        if v then SM.adopt(s.made, kind, SM.NAMES[kind], true) end
     end)
 end
 local OFF_TEXT = "Not in use" -- the row's grey line while unticked
@@ -90,7 +90,8 @@ for i, kind in ipairs(KINDS) do
         draw()
     end)
     r.on:SetScript("OnEnter", function(self)
-        St.Tooltip(self, nameOf(kind), {"Tick it to have Kureq Utils make and keep this macro. Unticked, the macro it "
+        St.Tooltip(self, nameOf(kind), {"Tick it to have Kureq Utils make and keep this macro: a General macro, shared "
+            .. "by all your characters and written for the one you're on. Unticked, the macro it "
             .. "made is deleted (an earlier version stays in History)."})
     end)
     r.on:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -118,7 +119,7 @@ local textLabel = Text(detail, "GameFontNormalSmall")
 textLabel:SetPoint("BOTTOMLEFT", textPane, "TOPLEFT", 0, 4)
 textLabel:SetText("The macro's text now")
 local macroText = textPane:CreateFontString(nil, "OVERLAY")
-macroText:SetFontObject(C.monoFont())
+C.mono(macroText)
 macroText:SetPoint("TOPLEFT", 10, -10)
 macroText:SetPoint("BOTTOMRIGHT", -10, 10)
 macroText:SetJustifyH("LEFT")
@@ -134,16 +135,21 @@ local dragHl = drag:CreateTexture(nil, "HIGHLIGHT")
 dragHl:SetAllPoints()
 dragHl:SetColorTexture(1, 1, 1, 0.15)
 drag:RegisterForDrag("LeftButton")
-local function pickup()
-    local m = SM.find(chosen == "ping" and P.NAME or SM.NAMES[chosen], chosen == "ping")
-    if not (isOn(chosen) and m) then
-        return detail.status:SetText(("Tick %s first: Kureq Utils makes the macro once it's on."):format(nameOf(chosen)))
+-- kind's macro on the cursor (the detail's icon, or dragging its row)
+local function pickup(kind)
+    local m = SM.find(kind == "ping" and P.NAME or SM.NAMES[kind], true)
+    if not (isOn(kind) and m) then
+        return detail.status:SetText(("Tick %s first: Kureq Utils makes the macro once it's on."):format(nameOf(kind)))
     end
     local ok, why = M.pickup(m)
     if not ok and why then detail.status:SetText(why) end
 end
-drag:SetScript("OnDragStart", pickup)
-drag:SetScript("OnClick", pickup)
+drag:SetScript("OnDragStart", function() pickup(chosen) end)
+drag:SetScript("OnClick", function() pickup(chosen) end)
+for _, r in ipairs(rows) do
+    r:RegisterForDrag("LeftButton")
+    r:SetScript("OnDragStart", function(self) pickup(self.kind) end)
+end
 drag:SetScript("OnEnter", function(self)
     St.Tooltip(self, "Drag to bar", {"Drag it to an action bar, or click it and then click a slot."})
 end)
@@ -299,8 +305,8 @@ if SM.PET_ACTIONS[myClass] then
     for _, row in ipairs(SM.ROWS) do
         Choice(f, row[2], "What KU Pet does when you press it with this key held. Spells you don't know yet are left "
             .. "out until you learn them.", choices,
-            function() local s = SM.db(); return s and s.pet[row[1]] or "" end,
-            function(v) SM.change(function(s) s.pet[row[1]] = v end) end)
+            function() return SM.petRows()[row[1]] or "" end,
+            function(v) SM.change(function() SM.petRows()[row[1]] = v end) end)
     end
 end
 

@@ -1,6 +1,6 @@
 -- KU Ping (a smart macro, part of Macros): keeps KureqPingCustom, an account macro that targets a mob (or a quest's
 -- mobs, from Questie) and pings it. Nothing acts on its own: it rewrites the macro out of combat and you press it.
--- It's off until ticked (per character, KureqUtilsCharDB.smartMacros.on.ping); the old Ping macro module's players
+-- It's off until ticked (account-wide, KureqUtilsDB.smartMacros.on.ping); the old Ping macro module's players
 -- start ticked. Like the other smart macros it's written only while it's ours (KureqUtilsDB.ping.made, account-wide as
 -- the macro is), out of combat, with Blizzard's macro window closed and once macros are known, and a version is kept
 -- before each rewrite. ns.build and ns.writeMacro also serve companion addons through the KureqUtils API.
@@ -29,10 +29,13 @@ ns.ping.on = pingOn
 -- ticked when it was on and KureqPingCustom exists, and adopts that macro as it is. Turned off, it also kept companion
 -- addons' ping macros from being written: that stays off (pingCompanionsOff).
 local function migrate()
-    local s, modules = SM.db(), ns.charDB.modules
-    if not s or s.pingMoved then return end
+    local s, c = SM.db(), ns.charDB
+    -- per character; before smart macros were shared it was kept in the character's smartMacros
+    if not s or c.pingMoved or type(c.smartMacros) == "table" and c.smartMacros.pingMoved then return end
+    local modules = c.modules
     if modules.ping == false then
-        s.pingCompanionsOff = true
+        -- account-wide now: only while no character has decided it yet
+        if not s.pingCompanionsSet then s.pingCompanionsOff = true end
     else
         local m, twin = SM.find(CUSTOM, true)
         if m and not twin then
@@ -40,7 +43,8 @@ local function migrate()
             db.made = {name = CUSTOM, body = m.body}
         end
     end
-    s.pingMoved = true
+    s.pingCompanionsSet = true -- the first character's choice stands for the account
+    c.pingMoved = true
 end
 tinsert(ns.onLoad, function(root) db = root.ping end)
 
@@ -279,7 +283,7 @@ end
 function P.companionsOn() local s = SM.db(); return s and not s.pingCompanionsOff or false end
 function P.setCompanions(v)
     local s = SM.db()
-    if s then s.pingCompanionsOff = not v or nil end
+    if s then s.pingCompanionsOff, s.pingCompanionsSet = not v or nil, true end
     if v then changed() else refreshPreview() end
 end
 local setCustom

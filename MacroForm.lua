@@ -110,10 +110,10 @@ L.HELPERS = {
 -- ed.count, ed.problem (why the last change wasn't saved), Insert and Insert spell. Spells you don't know are
 -- underlined in the code, with note after why. ed.showCount(text) says when the text is too long. The window hooks
 -- the boxes' scripts (HookScript on ed.box, the editor keeps its own): what a change saves to is its business.
+-- ed:SetFormSize(W, codeH) resizes it (codeH kept when nil).
 function L.MacroForm(parent, W, scope, note, codeH)
     codeH = codeH or 110
     local ed = CreateFrame("Frame", nil, parent)
-    ed:SetSize(W, 108 + codeH)
 
     ed.icon = CreateFrame("Button", nil, ed)
     ed.icon:SetSize(36, 36)
@@ -141,16 +141,12 @@ function L.MacroForm(parent, W, scope, note, codeH)
     ed.scope:SetPoint("TOPLEFT", 214, -7)
 
     local status = CreateFrame("Frame", nil, ed)
-    status:SetPoint("TOPLEFT", 0, -(48 + codeH))
-    status:SetSize(W, 16)
     ed.code = ns.macroCode.Editor(ed, W, codeH, status)
     ed.code:SetPoint("TOPLEFT", 0, -44)
     ed.code.note = note
     ed.box, ed.count = ed.code.edit, ed.code.length
 
     ed.problem = Text(ed, "GameFontNormalSmall")
-    ed.problem:SetPoint("TOPLEFT", 0, -(68 + codeH))
-    ed.problem:SetWidth(W)
     ed.problem:SetTextColor(1, 0.3, 0.3)
 
     local function insert(text)
@@ -160,13 +156,23 @@ function L.MacroForm(parent, W, scope, note, codeH)
     ed.insert = St.MenuButton(ed, 120, function() return "Insert" end, function(root)
         for _, h in ipairs(L.HELPERS) do root:CreateButton(h[1], function() insert(h[2]) end) end
     end)
-    ed.insert:SetPoint("TOPLEFT", 0, -(86 + codeH))
     ed.insert:Refresh()
     ed.spell = St.MenuButton(ed, 120, function() return "Insert spell" end, function(root)
         L.spellMenu(root, function(spell) insert("/cast " .. spell .. "\n") end)
     end)
     ed.spell:SetPoint("LEFT", ed.insert, "RIGHT", 6, 0)
     ed.spell:Refresh()
+    function ed:SetFormSize(w, h)
+        W, codeH = w, h or codeH
+        ed:SetSize(W, 108 + codeH)
+        status:SetPoint("TOPLEFT", 0, -(48 + codeH))
+        status:SetSize(W, 16)
+        ed.problem:SetPoint("TOPLEFT", 0, -(68 + codeH))
+        ed.problem:SetWidth(W)
+        ed.insert:SetPoint("TOPLEFT", 0, -(86 + codeH))
+        if ed.code:GetWidth() ~= W or ed.code:GetHeight() ~= codeH then ed.code:SetEditorSize(W, codeH) end
+    end
+    ed:SetFormSize(W, codeH)
     function ed.showCount(text)
         ed.code:Refresh()
         if #text > L.MACRO_TEXT then

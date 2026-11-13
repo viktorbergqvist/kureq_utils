@@ -623,8 +623,15 @@ f:SetScript("OnEvent", function(self, _, name)
         for k, v in pairs(defaults) do if t[k] == nil then t[k] = v end end
         ns.db[section] = t
     end
-    for _, fn in ipairs(ns.onLoad) do fn(ns.db) end
+    -- each on its own: one utility's error mustn't leave the others without their saved data
+    for _, fn in ipairs(ns.onLoad) do xpcall(function() fn(ns.db) end, geterrorhandler()) end
 end)
+
+-- Key bindings (Bindings.xml), under the header Delete.lua names
+for command, name in pairs({stats = "Open Kill stats", notes = "Open Character notes", loadouts = "Open Loadouts",
+    macro = "Open Macros", mail = "Open Mail rules", settings = "Open the settings"}) do
+    _G["BINDING_NAME_KUREQUTILS_" .. command:upper()] = name
+end
 
 -- API for companion addons ---------------------------------------------------------------------
 KureqUtils = {
@@ -643,6 +650,12 @@ KureqUtils = {
     -- a settings sub-page under Kureq Utils (key: its module's); returns the panel and its category
     AddSettingsPage = ns.AddSettingsPage,
     OpenSettings = ns.OpenSettings,
+    -- the key bindings (Bindings.xml): "settings", or the /ku command that toggles a window (it answers when off)
+    Toggle = function(command)
+        if not ns.db then return end
+        if command == "settings" then return ns.OpenSettings() end
+        ns.commands[command]("")
+    end,
     -- CombatQueue.Defer(key, fn): fn now out of combat, else once when combat ends (the last fn per key)
     CombatQueue = ns.CombatQueue,
     Checkbox = ns.Checkbox,

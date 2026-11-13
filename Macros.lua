@@ -20,7 +20,7 @@ M.COMBAT = "not in combat: Blizzard blocks changing macros then"
 M.MACRO_FRAME = "close Blizzard's macro window first: it would lose what you typed there"
 M.CHANGED = "That macro changed in the game: pick it again."
 
-ns.defaults.macros = {replaceBlizzard = false}
+ns.defaults.macros = {replaceBlizzard = false, wrap = true}
 
 -- History -----------------------------------------------------------------------------------------------------------
 
@@ -224,6 +224,25 @@ function M.delete(m)
     return true
 end
 
+-- The action slots macro index is on, and putting macro index on slots. Every slot the client has: Forever's bars 6 to
+-- 8 (MultiBar5-7) are pages 13-15, slots 145-180, past the 120 that loadouts cover.
+local function barSlots(index)
+    local slots = {}
+    local last = math.max(L.SLOTS, (MULTIBAR_7_ACTIONBAR_PAGE or 0) * (NUM_ACTIONBAR_BUTTONS or 12))
+    for slot = 1, last do
+        local kind, id = GetActionInfo(slot)
+        if kind == "macro" and id == index then slots[#slots + 1] = slot end
+    end
+    return slots
+end
+local function place(index, slots)
+    for _, slot in ipairs(slots) do
+        PickupMacro(index)
+        PlaceAction(slot)
+        ClearCursor()
+    end
+end
+
 -- Makes m an account macro (or a character one): a new macro there, put back on the bars the old one was on, and
 -- the old one deleted. Returns the new macro, or nil and why not.
 function M.move(m, account)
@@ -235,22 +254,28 @@ function M.move(m, account)
     if not now then return nil, why end
     why = M.problem({name = now.name, body = now.body, account = account}) or M.full(account)
     if why then return nil, why end
-    local slots = {}
-    for slot = 1, L.SLOTS do
-        local kind, index = GetActionInfo(slot)
-        if kind == "macro" and index == now.index then slots[#slots + 1] = slot end
-    end
+    local slots = barSlots(now.index)
     remember({name = now.name, icon = chosenIcon(now), body = now.body, account = now.account}, "Moved")
     CreateMacro(now.name, chosenIcon(now), now.body, not account or nil)
     DeleteMacro(now.index) -- the other scope's macros keep their indexes
     carry(now.account, now.name, account, now.name)
     local moved = M.find(nil, now.name, account)
-    for _, slot in ipairs(slots) do
-        PickupMacro(moved.index)
-        PlaceAction(slot)
-        ClearCursor()
-    end
+    place(moved.index, slots)
     return moved
+end
+
+-- Deletes macro m and puts macro to (in the other scope) on the bars m was on. Returns true, or nil and why not.
+function M.replace(m, to)
+    local why = M.blocked()
+    if why then return nil, why end
+    local now
+    now, why = current(m)
+    if not now then return nil, why end
+    local slots = barSlots(now.index)
+    remember({name = now.name, icon = chosenIcon(now), body = now.body, account = now.account}, "Moved")
+    DeleteMacro(now.index) -- the other scope's macros keep their indexes
+    place(to.index, slots)
+    return true
 end
 
 -- Puts macro m on the cursor, to drop on an action bar. Returns true, or nil and why not.
@@ -362,7 +387,17 @@ end
 if ShowMacroFrame then
     hooksecurefunc("ShowMacroFrame", function()
         if bypass or not (ns.db and ns.db.macros.replaceBlizzard and ns.IsOn("macros")) then return end
-        if MacroFrame and MacroFrame:IsShown() then HideUIPanel(MacroFrame) end
+        if MacroFrame and MacroFrame:IsShown() then
+            if InCombatLockdown() then
+                -- Forever refuses addons' HideUIPanel in combat: hide it now, free its panel slot once combat ends
+                MacroFrame:Hide()
+                ns.CombatQueue.Defer("macros:blizzard", function()
+                    if not MacroFrame:IsShown() then HideUIPanel(MacroFrame, nil, true) end
+                end)
+            else
+                HideUIPanel(MacroFrame)
+            end
+        end
         M.open()
     end)
 end

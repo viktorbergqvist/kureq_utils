@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.9 (2026-11-13)
+
+### Macros
+
+- Smart macros are General macros shared by all your characters, rewritten for the one you log in on.
+- Their ticks and settings are shared too; each character's old copies move to the same bar slots.
+- Drag a macro straight from any list to your bars.
+- The code editor grows with the window, and a Wrap lines tick lets long lines scroll sideways.
+- /tm, /wm and /cwm suggest the markers by icon and name, and the Now line names them.
+- No false conditions warning on /tm, /dismount and the pet commands.
+- Long condition chains wrap instead of being cut off with "...".
+- Clicks land on the right letter with UI addons that change all game fonts.
+- Problem underlines sit under their own line.
+- /macro in combat opens Kureq Macros instead of Blizzard's window too.
+
+### Key bindings
+
+- Open Kill stats, Character notes, Loadouts, Macros, Mail rules and the settings from a key.
+
+### Fixes
+
+- An error in one part at login no longer leaves the others without their settings.
+
 ## v1.8 (2026-11-13)
 
 ### Macros

@@ -460,6 +460,11 @@ local function macroRow(i)
     r.sub:ClearAllPoints()
     r.sub:SetPoint("BOTTOMLEFT", 40, 5)
     r.sub:SetPoint("RIGHT", -8, 0)
+    r:RegisterForDrag("LeftButton") -- a row drags its macro to a bar, as the form's icon does
+    r:SetScript("OnDragStart", function(self)
+        local ok, why = M.pickup(self.macro)
+        if not ok and why then say(why) end
+    end)
     return r
 end
 local function refreshMacros()
@@ -747,9 +752,15 @@ M.ui = {frame = frame, tabs = tabs, counts = counts, form = form, cards = cards,
     historyButton = historyButton, blizzardButton = blizzardButton, historyDialog = historyDialog, historyRows = historyRows, historyTabs = historyTabs,
     preview = preview, addPage = addPage, quietly = quietly, LIST_W = LIST_W, ROW_H = ROW_H}
 
--- Resizing: the list and detail panes stretch on their anchors (the lists show more rows). shortcut: the code editor
--- and the ready-made form keep their design width; make MacroEditor re-wrap to a new width to let them grow too.
-St.Resizable(frame, function() end)
+-- Resizing: the list and detail panes stretch on their anchors (the lists show more rows); the code editor grows with
+-- the detail pane, the action rows (Save, Drag to bar, Delete macro) staying under it. The ready-made form keeps its design width.
+St.Resizable(frame, function(w, h)
+    local codeH = CODE_H + h - H
+    ed:SetFormSize(w - W + FORM_W, codeH)
+    saveButton:SetPoint("TOPLEFT", 12, -(18 + 108 + codeH))
+    drag:SetPoint("TOPLEFT", 12, -(52 + 108 + codeH))
+    deleteButton:SetPoint("TOPRIGHT", -12, -(59 + 108 + codeH))
+end)
 
 local POPUPS = {"KUREQUTILS_DELETE_GAME_MACRO", "KUREQUTILS_DISCARD_MACRO_EDITS", "KUREQUTILS_MACRO_CONFLICT", "KUREQUTILS_REPLACE_LOADOUT_MACRO"}
 ns.OnModuleChange("macros", function(on)

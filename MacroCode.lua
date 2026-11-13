@@ -23,6 +23,12 @@ for key in ([[ABANDON ASSIST CANCELAURA CANCELFORM CANCELQUEUEDSPELL CAST CASTRA
     TARGET_NEAREST_FRIEND_PLAYER TARGET_NEAREST_PARTY TARGET_NEAREST_RAID USE USERANDOM USE_TOY WORLD_MARKER]]):gmatch("%S+") do
     SECURE[key] = true
 end
+-- Not secure, but they read [conditions] too (their handlers call SecureCmdOptionParse): /tm, /dismount, ...
+local READS = {}
+for key in ([[DISMISSBATTLEPET DISMOUNT LEAVEVEHICLE RANDOMFAVORITEPET RANDOMPET SET_TITLE SUMMON_BATTLE_PET
+    TARGET_MARKER TRANSMOG_OUTFIT]]):gmatch("%S+") do
+    READS[key] = true
+end
 -- commands whose words are spells (or items): checked against your spellbook, completed from it
 local SPELL_LISTS = {CAST = "cast", CASTSEQUENCE = "cast", CASTRANDOM = "cast", USE = "use", USERANDOM = "use"}
 
@@ -39,6 +45,7 @@ function C.commands()
             local alias = v:sub(2):lower()
             if (key or emote) and alias:find("^[%w_]+$") and not commands[alias] then
                 commands[alias] = {key = key or "EMOTE", secure = key and SECURE[key] or false,
+                    conditions = key and (SECURE[key] or READS[key]) or false,
                     spells = key and SPELL_LISTS[key], emote = emote and true or nil}
             end
         end
@@ -49,6 +56,34 @@ end
 local login = CreateFrame("Frame")
 login:RegisterEvent("PLAYER_LOGIN")
 login:SetScript("OnEvent", function() commands = nil end)
+
+-- Markers: /tm takes a raid target's number, /wm and /cwm a world marker's (their own numbering; world marker n
+-- shows a raid icon, paired as Blizzard_CompactRaidFrameManager's WORLD_RAID_MARKER_ORDER lists them)
+local ICON = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_"
+local RAID = {what = "Raid target marker", prefix = true} -- only /tm reads ! and ~ (/wm and /cwm call tonumber)
+for n, name in ipairs({"Star", "Circle", "Diamond", "Triangle", "Moon", "Square", "Cross", "Skull"}) do
+    RAID[n] = {name = name, icon = ICON .. n}
+end
+local WORLD = {what = "World marker"}
+for n, m in ipairs({{6, "Blue Square"}, {4, "Green Triangle"}, {3, "Purple Diamond"}, {7, "Red Cross"},
+    {1, "Yellow Star"}, {2, "Orange Circle"}, {5, "Silver Moon"}, {8, "White Skull"}}) do
+    WORLD[n] = {name = m[2], icon = ICON .. m[1]}
+end
+C.MARKERS = {TARGET_MARKER = RAID, WORLD_MARKER = WORLD, CLEAR_WORLD_MARKER = WORLD}
+-- The marker numbers in a parsed line: {{from, to, marker = {name, icon}, what}}
+function C.markersIn(line)
+    local set = line.info and C.MARKERS[line.info.key]
+    local out = {}
+    for _, cl in ipairs(set and line.clauses or {}) do
+        local at, n = (cl.args and cl.args.text or ""):match(set.prefix and "^[!~]?%s*()(%d+)$" or "^()(%d+)$")
+        local m = n and set[tonumber(n)]
+        if m then
+            local from = cl.args.from + at - 1
+            out[#out + 1] = {from = from, to = from + #n - 1, marker = m, what = set.what}
+        end
+    end
+    return out
+end
 
 -- Conditions --------------------------------------------------------------------------------------------------------
 
@@ -208,7 +243,7 @@ local function readLine(s, a, b)
         line.cmd = {name = word:lower(), from = i, to = i + #word}
         line.info = first == "/" and C.commands()[word:lower()] or nil
         local rest = i + #word + 1
-        if first == "#" or (line.info and line.info.secure) then
+        if first == "#" or (line.info and line.info.conditions) then
             readClauses(s, rest, b, line)
         else
             local x, y = trim(s, rest, b)
@@ -357,7 +392,7 @@ local function checkLine(line, ctx, out, known)
         local guess = onlyStarting(known, cmd.name)
         problem(out, cmd.from, cmd.to, "error", ("/%s isn't a command."):format(cmd.name),
             guess and {from = cmd.from, to = cmd.to, text = "/" .. guess})
-    elseif line.info and not line.info.secure and line.args and line.args.text:sub(1, 1) == "[" then
+    elseif line.info and not line.info.conditions and line.args and line.args.text:sub(1, 1) == "[" then
         problem(out, line.args.from, line.args.to, "warning",
             ("/%s doesn't read [conditions]: they're sent as they are."):format(cmd.name))
     end
@@ -381,6 +416,13 @@ local function checkLine(line, ctx, out, known)
         local unconditional = #cl.groups == 0
         for _, g in ipairs(cl.groups) do if #g.conds == 0 then unconditional = true end end
         if unconditional and cl.args and not always and line.kind == "command" then always = cl end
+        local set = line.info and C.MARKERS[line.info.key]
+        local bang = set and not set.prefix and cl.args and cl.args.text:match("^[!~]%s*()")
+        if bang then
+            problem(out, cl.args.from, cl.args.from + bang - 2, "error",
+                ("/%s doesn't take ! or ~ (only /tm does): it does nothing."):format(cmd.name),
+                {from = cl.args.from, to = cl.args.from + bang - 2, text = ""})
+        end
     end
     checkSpells(line, ctx, out)
 end
@@ -469,14 +511,23 @@ function C.now(parsed, problems)
     for _, line in ipairs(parsed.lines) do
         local clean = true
         for _, p in ipairs(bad) do if p.from <= line.to + 1 and p.to >= line.from then clean = false end end
-        if clean and line.info and line.info.secure then
+        if clean and line.info and line.info.conditions then
             local rest = parsed.text:sub(line.cmd.to + 1, line.to)
             local ok, action, target = pcall(SecureCmdOptionParse, rest)
             if ok and action ~= nil then
+                local set = C.MARKERS[line.info.key]
+                local how, n = action:match("^([!~]?)%s*(%d+)$")
+                if how ~= "" and not (set and set.prefix) then n = nil end
+                local after = ""
+                if set and n and set[tonumber(n)] then -- "/tm 8" says "/tm Skull on target"
+                    action = set[tonumber(n)].name
+                    after = how == "!" and " (keeps it on)" or how == "~" and " (only if unmarked)" or ""
+                    if line.info.key == "TARGET_MARKER" then target = target or "target" end
+                end
                 local text = "/" .. line.cmd.name .. (action ~= "" and " " .. action or "")
                 local who = target and target ~= "" and target ~= "player" and readable(UnitName(target)) or target
                 if who and who ~= "" then text = text .. " on " .. who end
-                return text
+                return text .. after
             end
         end
     end
@@ -551,7 +602,7 @@ function C.complete(text, cursor, ctx)
     typed = before:match("^%s*/([%w_]*)$")
     if typed then
         for alias, info in pairs(C.commands()) do
-            offer(items, typed, "/" .. alias, nil, info.secure and "Works with [conditions]" or info.emote and "Emote"
+            offer(items, typed, "/" .. alias, nil, info.conditions and "Works with [conditions]" or info.emote and "Emote"
                 or "Command")
         end
         return finish(items, cursor - #typed, wordEnd(text, cursor + 1, "[%w_]"))
@@ -588,6 +639,20 @@ function C.complete(text, cursor, ctx)
             return finish(items, cursor - #word + 1, wordEnd(text, cursor + 1, "%a"))
         end
         return nil
+    end
+    local set = line.info and C.MARKERS[line.info.key]
+    if set then -- the marker after /tm (and its ! or ~), /wm or /cwm, by icon and name; the number goes in
+        local word = before:sub((line.cmd.to - line.from) + 2):match("([^;%]]*)$"):gsub("^%s+", "")
+        if set.prefix then word = word:gsub("^[!~]%s*", "") end
+        if not word:find("^%w*$") then return nil end
+        for n, m in ipairs(set) do
+            local count = #items
+            offer(items, word, n .. " " .. m.name, tostring(n), set.what)
+            if items[count + 1] then items[count + 1].icon = m.icon end
+        end
+        if line.info.key == "CLEAR_WORLD_MARKER" then offer(items, word, "all", nil, "Every world marker") end
+        if #items == 0 then return nil end
+        return finish(items, cursor - #word + 1, wordEnd(text, cursor + 1, "%w"))
     end
     if not (line.info and line.info.spells) then return nil end
     -- a spell: the word after the last ; ] or , (and after a reset= or !)

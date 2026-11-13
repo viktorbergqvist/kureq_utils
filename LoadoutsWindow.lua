@@ -744,7 +744,7 @@ L.ui = {frame = frame, detail = detail, content = content, summary = summary, st
     chosen = chosen, bindingName = bindingName, refresh = function() refresh() end, resized = {}}
 
 -- Resizing: the list and the detail stretch on their anchors; this re-lays the tiles and what is as wide as the
--- detail's content (its summary, lines and rules; the bars, the macro form and the ready-made cards keep their size)
+-- detail's content (its summary, lines, rules and the macro form; the bars and the ready-made cards keep their size)
 St.Resizable(frame, function(w)
     local BW = St.bodySize(w, H)
     local tileW = math.floor((BW - 2 * PAD - (#TILES - 1) * GAP) / #TILES)

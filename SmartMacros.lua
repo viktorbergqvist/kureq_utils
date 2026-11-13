@@ -1,10 +1,11 @@
--- Smart macros (part of Macros): character macros Kureq Utils keeps up to date by itself. KU Potion, KU Mana, KU
+-- Smart macros (part of Macros): General (account) macros Kureq Utils keeps up to date by itself, shared by all your
+-- characters and written for the one logged in (its bags, class, spells and mounts). KU Potion, KU Mana, KU
 -- Drink, KU Food and KU Bandage use the best one in your bags, by item ID (the strongest you can use; conjured first
 -- on KU Drink and KU Food while that's ticked, Healthstone first on KU Potion while that's ticked); KU Hearth your
 -- hearth item; KU Mount dismounts, else casts your fastest mount (a random favourite of that speed, picked again after
 -- each ride; only favourites while "Favourites only" is ticked); KU Pet (hunters, warlocks) does what you set for no
 -- key, Shift, Ctrl and Alt. Each is off until ticked in the Macros window's Smart macros tab (SmartMacrosWindow.lua;
--- per character, KureqUtilsCharDB.smartMacros). They're written out of combat (ns.CombatQueue) and
+-- account-wide, KureqUtilsDB.smartMacros). They're written out of combat (ns.CombatQueue) and
 -- not while Blizzard's macro window is open, when bags, level, skills, spells, spell texts or your mount change. Only
 -- macros it made are touched: smartMacros.made keeps each one's name and the text last written, and a macro whose text
 -- changed elsewhere (or that's gone) is let go: unticked and never touched again. Every rewrite and delete keeps the
@@ -53,19 +54,61 @@ SM.ROWS = {{"none", "No key"}, {"shift", "Shift"}, {"ctrl", "Ctrl"}, {"alt", "Al
 local DEFAULT_PET = {HUNTER = {none = "callrevive", shift = "mend", ctrl = "dismiss", alt = ""},
     WARLOCK = {none = "imp", shift = "voidwalker", ctrl = "succubus", alt = "felhunter"}}
 
+-- The settings, account-wide in KureqUtilsDB.smartMacros (KU Pet's rows per class). Until 2026-11-13 they were per
+-- character (KureqUtilsCharDB.smartMacros): the first character to log in after that seeds the shared settings, and
+-- each character adds its own ticks, so no character loses a macro from its bars. Its old table stays (SM.moveOld
+-- reads the macros it made).
+local SEEDED = {"healthstone", "favourites", "noForm", "formFirst", "pingCompanionsOff"}
+local function seed(s, old)
+    for kind, v in pairs(type(old.on) == "table" and old.on or {}) do
+        if v == true and type(kind) == "string" then s.on[kind] = true end
+    end
+    if not s.seeded then
+        for _, k in ipairs(SEEDED) do if s[k] == nil then s[k] = old[k] end end
+        if old.pingMoved then s.pingCompanionsSet = true end -- its companions setting was decided
+        for _, k in ipairs({"drink", "food"}) do
+            if type(old.conjured) == "table" and type(old.conjured[k]) == "boolean" then s.conjured[k] = old.conjured[k] end
+        end
+        s.seeded = true
+    end
+    local _, class = UnitClass("player")
+    if DEFAULT_PET[class] and type(old.pet) == "table" and s.pet[class] == nil then
+        local rows = {}
+        for _, row in ipairs(SM.ROWS) do
+            if type(old.pet[row[1]]) == "string" then rows[row[1]] = old.pet[row[1]] end
+        end
+        s.pet[class] = rows
+    end
+end
 local function db()
-    local c = ns.charDB
-    if type(c) ~= "table" then return nil end
-    local s = type(c.smartMacros) == "table" and c.smartMacros or {}
-    c.smartMacros = s
+    local root, c = ns.db, ns.charDB
+    if type(root) ~= "table" or type(c) ~= "table" then return nil end
+    local s = type(root.smartMacros) == "table" and root.smartMacros or {}
+    root.smartMacros = s
     for _, k in ipairs({"on", "made", "pet", "conjured"}) do if type(s[k]) ~= "table" then s[k] = {} end end
+    local old = c.smartMacros
+    if type(old) == "table" and not old.shared then
+        seed(s, old)
+        old.shared = true
+    end
+    s.seeded = true -- whoever logs in first sets the account up: a character from before seeds only its ticks then
     if s.healthstone == nil then s.healthstone = true end
     for _, k in ipairs({"drink", "food"}) do if s.conjured[k] == nil then s.conjured[k] = true end end -- conjured first
     local _, class = UnitClass("player")
-    for row, v in pairs(DEFAULT_PET[class] or {}) do if s.pet[row] == nil then s.pet[row] = v end end
+    if DEFAULT_PET[class] then
+        local rows = type(s.pet[class]) == "table" and s.pet[class] or {}
+        s.pet[class] = rows
+        for row, v in pairs(DEFAULT_PET[class]) do if rows[row] == nil then rows[row] = v end end
+    end
     return s
 end
 SM.db = db
+-- KU Pet's rows (row -> action key) for the class you're on
+function SM.petRows()
+    local s = db()
+    local _, class = UnitClass("player")
+    return s and s.pet[class] or {}
+end
 
 -- Your bags -----------------------------------------------------------------------------------------------------------
 
@@ -287,7 +330,8 @@ function SM.body(kind, items)
     local s = db() or {}
     if kind == "pet" then
         local _, class = UnitClass("player")
-        return SM.petBody(class, s.pet or {}) or ("#showtooltip\n/run print(\"KU Pet: you don't know those pet "
+        if not SM.PET_ACTIONS[class] then return "#showtooltip\n/run print(\"KU Pet: your class has no pet.\")" end
+        return SM.petBody(class, SM.petRows()) or ("#showtooltip\n/run print(\"KU Pet: you don't know those pet "
             .. "spells yet.\")")
     end
     items = items or SM.bagItems()
@@ -327,7 +371,7 @@ function SM.uses(kind, items)
     if kind == "pet" then
         local _, class = UnitClass("player")
         for _, a in ipairs(SM.PET_ACTIONS[class] or {}) do
-            if a[1] == s.pet.none then return "No key: " .. SM.actionLabel(a) end
+            if a[1] == SM.petRows().none then return "No key: " .. SM.actionLabel(a) end
         end
         return "No key: nothing"
     end
@@ -427,6 +471,44 @@ function SM.keep(holder, key, name, account, body, icon)
     return "ok"
 end
 
+-- Once per character: the character macros it made before smart macros were shared (KureqUtilsCharDB.smartMacros.made)
+-- give way to the General ones. Each goes on the same bar slots: moved to General when there's none of its name yet,
+-- else deleted for the one another character made. One the player changed, or one whose name a General macro of the
+-- player's has, is left as it is (the player's now). With the General macros full it says so once and keeps them all,
+-- to try again next login.
+function SM.moveOld(s)
+    local old = ns.charDB and ns.charDB.smartMacros
+    if type(old) ~= "table" or old.macrosMoved then return end
+    local made = type(old.made) == "table" and old.made or {}
+    for _, kind in ipairs(SM.KINDS) do
+        local rec = made[kind]
+        local m, twin
+        if type(rec) == "table" and type(rec.name) == "string" then m, twin = find(rec.name, false) end
+        if m and not twin and SM.sameText(m.body, rec.body) then
+            local shared, sharedTwin = find(m.name, true)
+            local ours = s.made[kind]
+            if not shared then
+                local moved, why = M.move(m, true)
+                if not moved then
+                    if M.full(true) then
+                        sayOnce("movefull", ("Smart macros are shared by all your characters now, as General macros. "
+                            .. "%s Until then this character keeps its own."):format(why))
+                        return
+                    end
+                else
+                    s.made[kind] = {name = moved.name, body = moved.body}
+                end
+            elseif not sharedTwin and type(ours) == "table" and ours.name == m.name and SM.sameText(shared.body, ours.body) then
+                M.replace(m, shared)
+            end
+        elseif type(rec) == "table" and not twin and not s.made[kind] then
+            s.on[kind] = nil -- changed or deleted before they were shared: the player's, unticked as before
+        end
+        made[kind] = nil
+    end
+    old.macrosMoved = true
+end
+
 SM.retry = 5
 local schedule
 -- Brings every smart macro up to date (out of combat, once macros are known; runs again later while Blizzard's macro
@@ -437,19 +519,21 @@ function SM.update()
     if InCombatLockdown() then return schedule() end
     if MacroFrame and MacroFrame:IsShown() then return C_Timer.After(SM.retry, schedule) end
     wipe(textPending)
+    SM.moveOld(s)
     local items = SM.bagItems()
     for _, kind in ipairs(SM.KINDS) do
         local name = SM.NAMES[kind]
-        local status, why = SM.keep(s.made, kind, name, false, s.on[kind] and SM.body(kind, items) or nil)
+        local status, why = SM.keep(s.made, kind, name, true, s.on[kind] and SM.body(kind, items) or nil)
         local text
         if status == "lost" then
             s.on[kind] = nil
             text = SM.lostText(name)
             ns.say(text)
         elseif status == "twin" then
-            text = ("You have two macros called %s: delete one for Kureq Utils to keep it up to date."):format(name)
+            text = ("You have two General macros called %s: delete one for Kureq Utils to keep it up to date.")
+                :format(name)
         elseif status == "taken" then
-            text = ("You already have a macro called %s: rename it, and Kureq Utils makes its own."):format(name)
+            text = ("You already have a General macro called %s: rename it, and Kureq Utils makes its own."):format(name)
         elseif status == "full" then
             text = ("%s can't be made: %s"):format(name, why)
         end

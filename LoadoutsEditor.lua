@@ -54,6 +54,7 @@ ed = L.MacroForm(content, W, {
 }, " That's fine if the loadout is for another character.")
 ed:SetPoint("TOPLEFT", 0, -TOP)
 ed:Hide()
+U.resized[#U.resized + 1] = function(w) ed:SetFormSize(w) end -- the code editor grows with the window
 frame.macroEditor = ed
 local ED_H = 250
 local showCount = ed.showCount

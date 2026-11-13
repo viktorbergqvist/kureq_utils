@@ -6,7 +6,8 @@ maker with ready-made and smart macros (a ping macro with a nearby alert among t
 your other characters.
 
 Each utility is a module you turn on or off per character on the settings page (`/ku`, or left-click the minimap
-button; right-click it for a menu of the windows). Turning a module off never deletes its data.
+button; right-click it for a menu of the windows). Turning a module off never deletes its data. Each window and the
+settings page can also open from a key: bind them in **Key Bindings > AddOns > Kureq Utils**.
 
 - [Install](#install)
 - [Kill stats](#kill-stats)
@@ -228,7 +229,9 @@ Make and edit your character and account macros in a window of their own (`/ku m
   hunters and warlocks (you set what it does with no key, Shift, Ctrl and Alt) and
   [**KU Ping**](#ku-ping-and-nearby-alert). Each row shows what the macro uses now; pick one for its settings, the
   text it writes, its icon to drag to a bar and **Update now**. They're rewritten out of combat as your bags, level,
-  skills and spells change, and never touch a macro they didn't make.
+  skills and spells change, and never touch a macro they didn't make. They're General macros shared by all your
+  characters, with one set of ticks and settings: each login rewrites them for the character you're on (its bags,
+  class and spells).
 - **Ready-made:** cards for ready-made macros, your class's first: Soul Shard cast and demon attack for warlocks,
   Auto Shot for hunters, mouseover heals for priests, paladins, druids and shamans, then
   mouseover cast, focus, cast sequence and the rest, and one for each Kureq Utils command (`/ku stats`, `/ku notes`, ...). Fill in the options and **Create** makes it a character or an
