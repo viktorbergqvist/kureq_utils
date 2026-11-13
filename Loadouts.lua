@@ -34,6 +34,21 @@ local function known(id)
 end
 local function pickupSpell(id) if C_Spell and C_Spell.PickupSpell then C_Spell.PickupSpell(id) else PickupSpell(id) end end
 local function pickupItem(id) if C_Item and C_Item.PickupItem then C_Item.PickupItem(id) else PickupItem(id) end end
+-- A mount slot ("summonmount", the mount's ID): the journal picks it up by its place in the shown list; a mount the
+-- journal's filters hide falls back to its spell. Returns whether the cursor holds something.
+local function pickupMount(id)
+    local J = C_MountJournal
+    if not J then return false end
+    ClearCursor()
+    for i = 1, J.GetNumDisplayedMounts and J.GetNumDisplayedMounts() or 0 do
+        if J.GetDisplayedMountID(i) == id then J.Pickup(i); break end
+    end
+    if not GetCursorInfo() and J.GetMountInfoByID then
+        local _, spell = J.GetMountInfoByID(id)
+        if spell then pickupSpell(spell) end
+    end
+    return GetCursorInfo() ~= nil
+end
 function L.itemIcon(id) return C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id) or GetItemIcon and GetItemIcon(id) end
 
 local function charKey() return UnitGUID("player") end
@@ -141,7 +156,7 @@ end
 
 local function place(slot) PlaceAction(slot); ClearCursor() end
 -- a slot holding something loading can't put back (a mount, a pet, a companion): a restore leaves it alone
-local PLACEABLE = {spell = true, macro = true, item = true}
+local PLACEABLE = {spell = true, macro = true, item = true, summonmount = true}
 local function unplaceable(slot)
     local kind = GetActionInfo(slot)
     return kind ~= nil and not PLACEABLE[kind]
@@ -232,6 +247,13 @@ function L.apply(lo, parts)
                 pickupItem(a.id)
                 place(slot)
                 report.placed = report.placed + 1
+            elseif select(2, GetActionInfo(slot)) == a.id and GetActionInfo(slot) == a.type then
+                report.placed = report.placed + 1 -- already there (a mount, a pet): nothing to put back
+            elseif a.type == "summonmount" and pickupMount(a.id) then
+                place(slot)
+                report.placed = report.placed + 1
+            elseif a.type ~= "spell" and a.type ~= "macro" and a.type ~= "item" then
+                report.skipped = report.skipped + 1 -- can't put it back: leave the slot as it is
             else
                 clearSlot(slot)
                 report.skipped = report.skipped + 1
@@ -344,6 +366,10 @@ function L.preview(lo)
             holds = "macro:" .. a.name
         elseif a and a.type == "item" then
             holds = "item:" .. tostring(a.id)
+        elseif a and a.type == "summonmount" then
+            holds = "summonmount:" .. tostring(a.id)
+        elseif a and a.type ~= "macro" and a.type ~= "spell" then
+            holds = nowHolds(slot) -- what loading can't put back, it leaves
         end
         if lo.backup and unplaceable(slot) then holds = nowHolds(slot) end -- a restore leaves it
         if holds ~= nowHolds(slot) then p.changed[slot], p.changes = true, p.changes + 1 end
@@ -570,10 +596,11 @@ end
 local function spellOf(o) return ns.trim(o.spell or "") end
 L.READY = {
     {kind = "mouseover", name = "Mouseover cast", icon = 135907, options = {"spell", "target"},
-        text = "Casts on the unit under your mouse, else on your target.",
-        make = function(o)
+        text = "Casts on the unit under your mouse, else on your target (a friendly spell falls back to you).",
+        make = function(o) -- "exists" too: [@mouseover,help,nodead] alone often isn't enough (user's macro)
             local on = o.target == "harm" and "harm" or "help"
-            return ("#showtooltip\n/cast [@mouseover,%s,nodead][] %s"):format(on, spellOf(o))
+            return ("#showtooltip\n/cast [@mouseover,%s,nodead,exists][@target,%s,nodead,exists]%s[] %s")
+                :format(on, on, on == "help" and "[@player]" or "", spellOf(o))
         end},
     {kind = "focus", name = "Focus", icon = 132212, options = {"focus", "spell"},
         text = "Sets your focus to your mouseover or target, or casts a spell on your focus.",

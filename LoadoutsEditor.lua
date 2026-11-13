@@ -154,8 +154,8 @@ ed.problem:SetTextColor(1, 0.3, 0.3)
 
 -- Helpers: pieces of macro text, inserted where the cursor is
 local HELPERS = {
-    {"#showtooltip", "#showtooltip\n"}, {"On mouseover, friendly", "[@mouseover,help,nodead]"},
-    {"On mouseover, enemy", "[@mouseover,harm,nodead]"}, {"With Shift held", "[mod:shift]"}, {"In combat", "[combat]"},
+    {"#showtooltip", "#showtooltip\n"}, {"On mouseover, friendly", "[@mouseover,help,nodead,exists][@target,help,nodead,exists][@player]"},
+    {"On mouseover, enemy", "[@mouseover,harm,nodead,exists][@target,harm,nodead,exists]"}, {"With Shift held", "[mod:shift]"}, {"In combat", "[combat]"},
     {"/stopcasting", "/stopcasting\n"}, {"/cast", "/cast "}, {"/use 13 (top trinket)", "/use 13\n"},
     {"/use 14 (bottom trinket)", "/use 14\n"}, {"/startattack", "/startattack\n"}, {"/targetenemy", "/targetenemy\n"},
 }

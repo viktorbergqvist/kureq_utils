@@ -504,6 +504,7 @@ ns.Header(panel, "Lists")
 local KINDS = {{"starts", "Starts with"}, {"ends", "Ends with"}, {"contains", "Contains"}, {"pattern", "Pattern"}}
 local KIND_HELP = "Starts with, Ends with and Contains: plain text, any case. Pattern: a Lua pattern on the name, "
     .. "case-sensitive, e.g. Page %d+$ for names that end in a page number."
+ns.delete.KINDS, ns.delete.KIND_HELP = KINDS, KIND_HELP -- Mail rules' name rules too
 for _, l in ipairs({
     {"never", LIST_NAME.never, "Always kept, whatever the rules say.", "are always kept."},
     {"always", LIST_NAME.always, "May be deleted even above the quality and value limits, when it's the cheapest.",

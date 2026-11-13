@@ -565,6 +565,7 @@ do
             if ns.loadouts and ns.IsOn("loadouts") then
                 root:CreateButton("Loadouts", function() ns.loadouts.toggle() end)
             end
+            if ns.mail and ns.IsOn("mail") then root:CreateButton("Mail rules", function() ns.mail.toggle() end) end
             root:CreateDivider()
             root:CreateButton("Settings", function() ns.OpenSettings() end)
         end)
@@ -573,7 +574,7 @@ do
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetText("Kureq Utils " .. ns.version, 1, 1, 1)
         GameTooltip:AddLine("Click to open the settings.")
-        GameTooltip:AddLine("Right-click for kill stats, notes and loadouts.")
+        GameTooltip:AddLine("Right-click for kill stats, notes, loadouts and mail rules.")
         GameTooltip:Show()
     end)
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)

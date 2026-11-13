@@ -78,6 +78,9 @@ local function run(checks)
     if panel:IsVisible() then ns.refresh(panel) end
 end
 
+-- other files' checks: ns.debug.run({{name, fn}, ...}) when they find something out (Mail rules' chained send)
+ns.debug = {run = run}
+
 -- the page's results, one line per check: "Zul'Farrak · target level: secret"
 local function resultsText()
     local results = ns.db and ns.db.debug.results or {}

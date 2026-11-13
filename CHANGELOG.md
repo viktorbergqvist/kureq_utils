@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7 (2026-11-13)
+
+### Loadouts
+
+- Mouseover macros fall back to your target, then you, and check the unit exists
+- Loading puts your mounts back on the bars instead of clearing them
+
+### Mail rules
+
+- New: send herbs, ore, cloth and other items to your other characters from the mailbox, by rules you set (item kind, name starts with / ends with / contains, quality, keep some back). Ready-made rules, a Never send list, a preview of what goes to whom, and a chat line after sending. /ku mail.
+
 ## v1.6.1 (2026-11-12)
 
 ### Ping macro

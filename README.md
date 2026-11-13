@@ -1,8 +1,8 @@
 # Kureq Utils
 
 Small quality-of-life utilities for **WoW Forever**: kill stats with graphs and maps,
-a delete key for full bags, notes and ratings on other players, loadouts you can move between characters, and a ping
-macro with a nearby alert.
+a delete key for full bags, notes and ratings on other players, loadouts you can move between characters, mail
+rules that send your mats to your other characters, and a ping macro with a nearby alert.
 
 Each utility is a module you turn on or off per character on the settings page (`/ku`, or left-click the minimap
 button; right-click it for a menu of the windows). Turning a module off never deletes its data.
@@ -12,6 +12,7 @@ button; right-click it for a menu of the windows). Turning a module off never de
 - [Delete items](#delete-items)
 - [Character notes](#character-notes)
 - [Loadouts](#loadouts)
+- [Mail rules](#mail-rules)
 - [Ping macro and nearby alert](#ping-macro-and-nearby-alert)
 - [Commands](#commands)
 - [Saved data](#saved-data)
@@ -165,6 +166,24 @@ Change a saved loadout in its tabs; your character only changes when you load it
   the loadout's macros and buttons. A key used elsewhere in the loadout moves.
 - **Settings:** tick or type each setting's value, or remove it from the loadout.
 
+## Mail rules
+
+Rules that mail bag items to your other characters: herbs to your alchemist, ore to your blacksmith. Open the window
+with `/ku mail` or from the minimap button's menu.
+
+- **Rules:** each rule has who gets it and conditions that must all match: **item kinds** (Herb, Cloth, or a whole
+  class such as Trade Goods), **name rules** (starts with, ends with, contains or a pattern), **quality**, and how
+  many of each item to **keep** in your bags. The first rule that matches a stack sends it; Up and Down change the
+  order. **From template** fills in herbs, ore and stone, cloth, leather or enchanting mats; you type who gets them.
+  A rule never mails the character you're on.
+- **At a mailbox:** a **Send by rules** button beside the Send Mail tab says how many items the rules match. One click
+  sends them all, 12 to a mail, and says in chat what went where. If the game wants a click per mail, the button
+  becomes **Send next mail**.
+- **Preview:** the window's Preview tab, or the Preview button at the mailbox, lists what would go to whom and the
+  postage.
+- **Never send:** on the settings page, drop items or add name rules that are never mailed. Soulbound, quest and
+  conjured items never are either.
+
 ## Ping macro and nearby alert
 
 Kureq Utils keeps a macro, **KureqPingCustom**, that targets a mob and pings it. Put it on your action bar, then:
@@ -191,11 +210,12 @@ on (V).
 | `/ku note [name]` | Your target's note, or that character's |
 | `/ku notes` | Notes window |
 | `/ku loadouts` | Loadouts window |
+| `/ku mail` | Mail rules window |
 | `/ku ping <name or quest link>` | What the ping macro targets |
 
 ## Saved data
 
-Kill stats, notes, deletion statistics, loadouts and loadout backups are saved account-wide in `KureqUtilsDB`, so
+Kill stats, notes, deletion statistics, loadouts, loadout backups and mail rules are saved account-wide in `KureqUtilsDB`, so
 every character can see them. Which modules are on is saved per character in `KureqUtilsCharDB`.
 
 ## Changelog and licence
