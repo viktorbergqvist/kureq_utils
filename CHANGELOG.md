@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.11 (2026-11-13)
+
+### Macros
+
+- New smart macro KU Enchant: enchants the item whose tooltip shows with the enchant chosen in your Enchanting window.
+- Works on items in your bags or on your character, whichever addon draws them.
+- Its settings: say yes to replacing an enchant (on), and to making the item soulbound (off).
+
 ## v1.10 (2026-11-13)
 
 ### Loadouts

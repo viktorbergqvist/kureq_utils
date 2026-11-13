@@ -226,8 +226,9 @@ Make and edit your character and account macros in a window of their own (`/ku m
   while that's ticked), **KU Mana**, **KU Drink** and **KU Food** (conjured ones first while that's ticked),
   **KU Bandage** (the best your First Aid allows), **KU Hearth**, **KU Mount** (dismounts, or rides your fastest
   mount, a random favourite of that speed; only favourites while **Favourites only** is ticked), **KU Pet** for
-  hunters and warlocks (you set what it does with no key, Shift, Ctrl and Alt) and
-  [**KU Ping**](#ku-ping-and-nearby-alert). Each row shows what the macro uses now; pick one for its settings, the
+  hunters and warlocks (you set what it does with no key, Shift, Ctrl and Alt), **KU Enchant** (enchants the item
+  whose tooltip shows with the enchant picked in your Enchanting window, and can say yes to replacing an enchant or
+  making the item soulbound) and [**KU Ping**](#ku-ping-and-nearby-alert). Each row shows what the macro uses now; pick one for its settings, the
   text it writes, its icon to drag to a bar and **Update now**. They're rewritten out of combat as your bags, level,
   skills and spells change, and never touch a macro they didn't make. They're General macros shared by all your
   characters, with one set of ticks and settings: each login rewrites them for the character you're on (its bags,

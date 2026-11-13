@@ -297,6 +297,12 @@ Tick(mountSettings, "Travel form", "Where you can't mount (indoors, in combat, s
 Tick(mountSettings, "Form instead of a mount", "Always your travel form, never a mount (say, a druid's Travel "
     .. "Form before a fast mount).", smartSetting("formFirst"),
     function(v) SM.change(function(s) s.formFirst = v or nil end) end)
+local enchantSettings = Settings("enchant")
+Tick(enchantSettings, "Say yes to replacing an enchant", "When the item already has an enchant, KU Enchant answers "
+    .. "yes to the game's question to replace it.", smartSetting("enchantReplace"), setSmart("enchantReplace"))
+Tick(enchantSettings, "Say yes to making the item soulbound", "When the enchant would make the item soulbound, KU "
+    .. "Enchant answers yes to the game's question.", smartSetting("enchantBind"),
+    function(v) SM.change(function(s) s.enchantBind = v or nil end) end)
 
 if SM.PET_ACTIONS[myClass] then
     local f = Settings("pet")

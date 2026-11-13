@@ -4,7 +4,7 @@
 -- on KU Drink and KU Food while that's ticked, Healthstone first on KU Potion while that's ticked); KU Hearth your
 -- hearth item; KU Mount dismounts, else casts your fastest mount (a random favourite of that speed, picked again after
 -- each ride; only favourites while "Favourites only" is ticked); KU Pet (hunters, warlocks) does what you set for no
--- key, Shift, Ctrl and Alt. Each is off until ticked in the Macros window's Smart macros tab (SmartMacrosWindow.lua;
+-- key, Shift, Ctrl and Alt; KU Enchant enchants the item whose tooltip shows (SM.enchantHovered). Each is off until ticked in the Macros window's Smart macros tab (SmartMacrosWindow.lua;
 -- account-wide, KureqUtilsDB.smartMacros). They're written out of combat (ns.CombatQueue) and
 -- not while Blizzard's macro window is open, when bags, level, skills, spells, spell texts or your mount change. Only
 -- macros it made are touched: smartMacros.made keeps each one's name and the text last written, and a macro whose text
@@ -15,9 +15,9 @@ local M, C = ns.macros, ns.macroCode
 local SM = {}
 M.smart = SM
 
-SM.KINDS = {"potion", "mana", "drink", "food", "bandage", "hearth", "mount", "pet"}
+SM.KINDS = {"potion", "mana", "drink", "food", "bandage", "hearth", "mount", "pet", "enchant"}
 SM.NAMES = {potion = "KU Potion", mana = "KU Mana", drink = "KU Drink", food = "KU Food", bandage = "KU Bandage",
-    hearth = "KU Hearth", mount = "KU Mount", pet = "KU Pet"}
+    hearth = "KU Hearth", mount = "KU Mount", pet = "KU Pet", enchant = "KU Enchant"}
 SM.TEXT = {potion = "Drinks the strongest healing potion in your bags that your level allows.",
     mana = "Drinks the strongest mana potion in your bags that your level allows.",
     drink = "Drinks the best drink in your bags that your level allows.",
@@ -27,10 +27,12 @@ SM.TEXT = {potion = "Drinks the strongest healing potion in your bags that your 
     mount = "Dismounts when you're mounted, else rides your fastest mount (a random favourite of that speed, picked "
         .. "again after each ride). Where you can't mount (indoors, in combat, swimming) or with no mount, it uses "
         .. "your travel form: Ghost Wolf, Travel, Cat or Aquatic Form, or Aspect of the Cheetah.",
-    pet = "Your pet's actions: pick what it does with no key held, with Shift, with Ctrl and with Alt."}
+    pet = "Your pet's actions: pick what it does with no key held, with Shift, with Ctrl and with Alt.",
+    enchant = "Enchants the item whose tooltip shows with the enchant chosen in your Enchanting window: open "
+        .. "Enchanting, pick the enchant, hover the item in your bags or on your character and press it."}
 SM.ICONS = {potion = "INV_Potion_54", mana = "INV_Potion_76", drink = "INV_Drink_07", food = "INV_Misc_Food_14",
     bandage = "INV_Misc_Bandage_15", hearth = "INV_Misc_Rune_01", mount = "Ability_Mount_RidingHorse",
-    pet = "Ability_Hunter_BeastCall"}
+    pet = "Ability_Hunter_BeastCall", enchant = "Trade_Engraving"}
 local QUESTION_MARK = 134400
 -- Healthstones (every size and talent rank): their data reads as any other healing item, so they're named here
 local HEALTHSTONES = {}
@@ -93,6 +95,7 @@ local function db()
     end
     s.seeded = true -- whoever logs in first sets the account up: a character from before seeds only its ticks then
     if s.healthstone == nil then s.healthstone = true end
+    if s.enchantReplace == nil then s.enchantReplace = true end -- KU Enchant says yes to replacing an enchant
     for _, k in ipairs({"drink", "food"}) do if s.conjured[k] == nil then s.conjured[k] = true end end -- conjured first
     local _, class = UnitClass("player")
     if DEFAULT_PET[class] then
@@ -347,6 +350,7 @@ local RIDE = "[nomounted,outdoors,nocombat,noswimming]" -- where a mount can be 
 -- The text kind's macro should have now
 function SM.body(kind, items)
     local s = db() or {}
+    if kind == "enchant" then return "/run KureqUtils.EnchantHovered()" end -- it reads its settings when pressed
     if kind == "pet" then
         local _, class = UnitClass("player")
         if not SM.PET_ACTIONS[class] then return "#showtooltip\n/run print(\"KU Pet: your class has no pet.\")" end
@@ -394,6 +398,7 @@ function SM.uses(kind, items)
         end
         return "No key: nothing"
     end
+    if kind == "enchant" then return "The item your tooltip shows" end
     items = items or SM.bagItems()
     if kind == "mount" then -- the mount picked last (a random favourite), as the macro has it
         local body = s.made.mount and s.made.mount.body or SM.body("mount", items)
@@ -542,7 +547,8 @@ function SM.update()
     local items = next(s.on) and SM.bagItems() or nil -- none ticked: the bags aren't read
     for _, kind in ipairs(SM.KINDS) do
         local name = SM.NAMES[kind]
-        local status, why = SM.keep(s.made, kind, name, true, s.on[kind] and SM.body(kind, items) or nil)
+        local status, why = SM.keep(s.made, kind, name, true, s.on[kind] and SM.body(kind, items) or nil,
+            kind == "enchant" and SM.ICONS.enchant or nil) -- no #showtooltip to give it one
         local text
         if status == "lost" then
             s.on[kind] = nil
@@ -613,6 +619,40 @@ tipEvents:SetScript("OnEvent", function(_, _, instance)
 end)
 ns.watch("Smart macros", events)
 ns.watch("Smart macros update", SM, "update")
+
+-- KU Enchant: the item whose game tooltip shows gets the enchant chosen in the profession window, as its own
+-- "Select Item to Enchant" slot does (clicking another addon's bag or character button isn't a valid target). The
+-- server asks "replace?" (REPLACE_TRADESKILL_ENCHANT) or "soulbound?" (BIND_ENCHANT) afterwards, so the answers wait
+-- here for a few seconds. The popup is hidden a frame later: Blizzard may show it after this handler ran.
+local answer = {untilTime = 0}
+local answers = CreateFrame("Frame")
+for _, e in ipairs({"REPLACE_TRADESKILL_ENCHANT", "BIND_ENCHANT"}) do pcall(answers.RegisterEvent, answers, e) end
+answers:SetScript("OnEvent", function(_, event)
+    if GetTime() > answer.untilTime or not ns.IsOn("macros") then return end
+    local yes = event == "REPLACE_TRADESKILL_ENCHANT" and answer.replace and C_Item.ReplaceTradeskillEnchant
+        or event == "BIND_ENCHANT" and answer.bind and C_Item.BindEnchant
+    if not yes then return end
+    answer.untilTime = 0
+    yes()
+    C_Timer.After(0, function() StaticPopup_Hide(event) end)
+end)
+-- replace and bind default to KU Enchant's settings
+function SM.enchantHovered(replace, bind)
+    if not ns.IsOn("macros") then return ns.say("Macros is off; turn it on in /ku.") end
+    local page = ProfessionsFrame and ProfessionsFrame:IsShown() and ProfessionsFrame.CraftingPage
+    local recipe = page and page.SchematicForm and page.SchematicForm:GetRecipeInfo()
+    if not (recipe and C_TradeSkillUI.CraftEnchant) then return ns.say("Open Enchanting and pick the enchant first.") end
+    local data = GameTooltip:IsShown() and GameTooltip.GetPrimaryTooltipData and GameTooltip:GetPrimaryTooltipData()
+    local where = data and data.guid and C_Item.GetItemLocation(data.guid)
+    if not where then return ns.say("Hover the item to enchant, in your bags or on your character.") end
+    local s = db() or {}
+    if replace == nil then replace = s.enchantReplace end
+    if bind == nil then bind = s.enchantBind end
+    answer.replace, answer.bind, answer.untilTime = replace, bind, GetTime() + 5
+    C_TradeSkillUI.CraftEnchant(recipe.recipeID, 1, nil, where)
+end
+KureqUtils.EnchantHovered = SM.enchantHovered
+ns.OnModuleChange("macros", function(on) if not on then answer.untilTime = 0 end end)
 
 -- For the Smart macros tab: a setting changed (fn gets the saved table), then the macros brought up to date
 function SM.change(fn)
