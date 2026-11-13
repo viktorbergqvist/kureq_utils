@@ -510,9 +510,11 @@ function ns.whenOn(key, fn)
     end
 end
 
+ns.commandList = {} -- {name, usage, key, module's name} in the order they're added (the Macros gallery's)
 function ns.AddCommand(name, usage, fn, key)
     ns.commands[name] = key and ns.whenOn(key, fn) or fn
     ns.Label(root, usage)
+    tinsert(ns.commandList, {name = name, usage = usage, key = key, moduleName = key and modules[key].name})
 end
 
 SLASH_KUREQUTILS1 = "/ku"
@@ -558,6 +560,27 @@ do
     local angle, radius = math.rad(200), Minimap:GetWidth() / 2 + 5
     button:SetPoint("CENTER", Minimap, "CENTER", radius * math.cos(angle), radius * math.sin(angle))
     -- left-click: the settings; right-click: a menu of the windows (each utility that has one, when loaded)
+    -- {ns table, module key, name, icon}, in menu order
+    local WINDOWS = {
+        {"stats", "stats", "Kill stats", "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01"},
+        {"notes", "notes", "Character notes", "Interface\\Icons\\INV_Misc_Note_01"},
+        {"loadouts", "loadouts", "Loadouts", "Interface\\Icons\\INV_Misc_Book_11"},
+        {"macros", "macros", "Macros", "Interface\\Icons\\INV_Misc_Book_09"},
+        {"mail", "mail", "Mail rules", "Interface\\Icons\\INV_Letter_15"},
+    }
+    -- an entry with its icon at the left, as Blizzard's own menus add one (CommunitiesStreams)
+    local function menuEntry(root, text, icon, fn)
+        local entry = root:CreateButton(text, fn)
+        if not (entry and entry.AddInitializer) then return end
+        entry:AddInitializer(function(b)
+            local tex = b:AttachTexture()
+            tex:SetSize(16, 16)
+            tex:SetPoint("LEFT")
+            tex:SetTexture(icon)
+            if icon:find("Icons") then tex:SetTexCoord(0.08, 0.92, 0.08, 0.92) end -- trim the icon's own border
+            b.fontString:SetPoint("LEFT", tex, "RIGHT", 6, 0)
+        end)
+    end
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:SetScript("OnClick", function(self, mouse)
         if mouse ~= "RightButton" then return ns.OpenSettings() end
@@ -565,14 +588,12 @@ do
         -- (which holds the button) hides on a press outside it, so a click on a lower entry never landed.
         MenuUtil.CreateContextMenu(nil, function(_, root)
             root:CreateTitle("Kureq Utils")
-            if ns.stats and ns.IsOn("stats") then root:CreateButton("Kill stats", function() ns.stats.toggle() end) end
-            if ns.notes and ns.IsOn("notes") then root:CreateButton("Character notes", function() ns.notes.toggle() end) end
-            if ns.loadouts and ns.IsOn("loadouts") then
-                root:CreateButton("Loadouts", function() ns.loadouts.toggle() end)
+            for _, w in ipairs(WINDOWS) do
+                local t = ns[w[1]]
+                if t and ns.IsOn(w[2]) then menuEntry(root, w[3], w[4], function() t.toggle() end) end
             end
-            if ns.mail and ns.IsOn("mail") then root:CreateButton("Mail rules", function() ns.mail.toggle() end) end
             root:CreateDivider()
-            root:CreateButton("Settings", function() ns.OpenSettings() end)
+            menuEntry(root, "Settings", "Interface\\WorldMap\\GEAR_64GREY", function() ns.OpenSettings() end)
         end)
     end)
     button:SetScript("OnEnter", function(self)

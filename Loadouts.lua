@@ -52,6 +52,12 @@ end
 function L.itemIcon(id) return C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id) or GetItemIcon and GetItemIcon(id) end
 
 local function charKey() return UnitGUID("player") end
+local function copy(v)
+    if type(v) ~= "table" then return v end
+    local t = {}
+    for k, x in pairs(v) do t[k] = copy(x) end
+    return t
+end
 
 -- Your macros, general ones first (only with withAccount): {name, icon, body, account}
 local function yourMacros(withAccount)
@@ -144,13 +150,39 @@ function L.save(name, id) -- a new loadout, or id's replaced; returns its id
     lo.name = name
     local db = ns.db.loadouts
     if id and db.list[id] then
-        lo.created = db.list[id].created
+        local old = db.list[id]
+        lo.created, lo.anyClass, lo.ignored = old.created, old.anyClass, old.ignored -- what you set on it stays
+        lo.rules = old.rules
         lo.updated = time()
     else
         id = db.nextId
         db.nextId = id + 1
     end
     db.list[id] = lo
+    return id
+end
+
+-- A full copy of lo (a saved loadout or a backup) as a new saved loadout named "<name> (copy)", a number added if
+-- that's taken; returns its id. What only a backup has (what to restore and how) stays behind.
+function L.clone(lo)
+    local new = copy(lo)
+    for _, k in ipairs({"backup", "parts", "pending", "madeMacros", "boundMacros", "bindingSet", "switchedSet",
+        "updated"}) do new[k] = nil end
+    local taken = {}
+    for _, x in pairs(L.list()) do taken[x.name] = true end
+    local base = lo.name
+    if #base > 45 then base = base:sub(1, 45):gsub("[\192-\255][\128-\191]*$", "") end -- room for " (copy) 2"
+    base = base .. " (copy)"
+    local name, n = base, 1
+    while taken[name] do
+        n = n + 1
+        name = base .. " " .. n
+    end
+    new.name, new.created, new.rules = name, time(), L.rulesOff(lo.rules)
+    local db = ns.db.loadouts
+    local id = db.nextId
+    db.nextId = id + 1
+    db.list[id] = new
     return id
 end
 
@@ -176,6 +208,7 @@ local function macroIndex(name, account)
         if GetMacroInfo(i) == name then return i end
     end
 end
+L.macroIndex = macroIndex
 
 -- Why loading lo's macros doesn't fit next to yours (nil when it does): the new ones it makes, per scope
 function L.macroRoom(lo)
@@ -193,7 +226,11 @@ function L.macroRoom(lo)
 end
 
 -- Loads parts ({actions, macros, bindings, cvars} = true) of a loadout. Returns a report, or nil and why not.
-function L.apply(lo, parts)
+-- Key binding sets (Enum.BindingSet on Forever): the account's, shared by your characters, and a character's own
+local ACCOUNT_SET = Enum and Enum.BindingSet and Enum.BindingSet.Account or ACCOUNT_BINDINGS or 1
+local CHARACTER_SET = Enum and Enum.BindingSet and Enum.BindingSet.Character or CHARACTER_BINDINGS or 2
+-- characterSet: the bindings go to this character's own set, never the account's (the default for new characters)
+function L.apply(lo, parts, characterSet)
     if InCombatLockdown() then return nil, COMBAT end
     local full = parts.macros and L.macroRoom(lo)
     if full then return nil, full end
@@ -222,10 +259,14 @@ function L.apply(lo, parts)
         end
     end
     if parts.actions then
-        local pending = {}
+        local pending, ignored = {}, lo.ignored or {}
+        for slot, name in pairs(L.pending() or {}) do -- an ignored slot's waiting spell keeps waiting
+            if ignored[slot] then pending[slot] = name end
+        end
         for slot = 1, L.SLOTS do
             local a = lo.actions[slot]
-            if lo.backup and unplaceable(slot) then -- left as it is
+            if ignored[slot] then -- never touched
+            elseif lo.backup and unplaceable(slot) then -- left as it is
             elseif not a then
                 clearSlot(slot)
             elseif a.type == "spell" then
@@ -260,12 +301,19 @@ function L.apply(lo, parts)
             end
         end
         for slot, name in pairs(lo.pending or {}) do -- a backup's spells that were still waiting, if the slot's free
-            if not GetActionInfo(slot) then pending[slot] = name end
+            if not (ignored[slot] or GetActionInfo(slot)) then pending[slot] = name end
         end
         ns.db.loadouts.pending[charKey()] = next(pending) and pending or nil
         if lo.pending then L.fillPending() end -- a restored spell may have been learned since
     end
-    if parts.bindings then
+    local now = parts.bindings and GetCurrentBindingSet()
+    if parts.bindings and lo.switchedSet and now ~= ACCOUNT_SET and LoadBindings then
+        -- a restore of an automatic load that moved you from the account's set to your own: back to the account's,
+        -- which that load never changed
+        LoadBindings(ACCOUNT_SET)
+        SaveBindings(ACCOUNT_SET)
+        for _ in pairs(lo.bindings) do report.bindings = report.bindings + 1 end
+    elseif parts.bindings then
         local keep = {} -- every key the loadout binds; other bound keys are unbound, so the keys end up as saved
         for _, keys in pairs(lo.bindings) do
             for _, key in pairs(keys) do keep[key] = true end
@@ -287,7 +335,7 @@ function L.apply(lo, parts)
             for _, key in pairs(keys) do SetBinding(key, command) end
             report.bindings = report.bindings + 1
         end
-        SaveBindings(GetCurrentBindingSet())
+        SaveBindings(characterSet and CHARACTER_SET or lo.bindingSet or now)
     end
     if parts.cvars then
         for name, value in pairs(lo.cvars) do
@@ -310,13 +358,16 @@ function L.backups()
 end
 
 -- Loads parts (L.ALL when nil) of a loadout, keeping what you have now as a backup first. Returns as L.apply does.
-function L.load(lo, parts)
+function L.load(lo, parts, characterSet)
     if InCombatLockdown() then return nil, COMBAT end
     parts = parts or L.ALL
     local full = parts.macros and L.macroRoom(lo)
     if full then return nil, full end
     local backup, list = L.capture(true), L.backups()
     backup.name, backup.backup, backup.parts = "Before " .. lo.name, true, {}
+    backup.ignored = copy(lo.ignored) -- the slots this load leaves, a restore leaves too
+    backup.bindingSet = GetCurrentBindingSet and GetCurrentBindingSet() -- a restore puts the set back too
+    backup.switchedSet = characterSet and parts.bindings and backup.bindingSet == ACCOUNT_SET or nil
     for part, on in pairs(parts) do backup.parts[part] = on end -- a restore puts back only what this load changes
     for name in pairs(L.cvarNames()) do -- every setting, defaults too, so a restore can set them back
         backup.cvars[name] = backup.cvars[name] or (C_CVar.GetCVarInfo(name))
@@ -331,7 +382,7 @@ function L.load(lo, parts)
     end
     tinsert(list, 1, backup)
     for i = #list, L.BACKUPS + 1, -1 do list[i] = nil end
-    local report, why = L.apply(lo, parts)
+    local report, why = L.apply(lo, parts, characterSet)
     if report then -- what a restore must undo besides putting back what was there
         backup.madeMacros = report.madeMacros
         backup.boundMacros = {}
@@ -350,12 +401,15 @@ local function nowHolds(slot)
     return kind and kind .. ":" .. tostring(id)
 end
 function L.preview(lo)
-    local p = {changed = {}, waiting = {}, changes = 0, waits = 0}
+    local p = {changed = {}, waiting = {}, changes = 0, waits = 0, ignores = 0}
+    local ignored = lo.ignored or {}
     local macros = {} -- loading the macros makes these
     for _, m in ipairs(lo.macros) do macros[m.name] = true end
     for slot = 1, L.SLOTS do
         local a, holds = lo.actions[slot], nil
-        if a and a.type == "spell" then
+        if ignored[slot] then
+            holds, p.ignores = nowHolds(slot), p.ignores + 1 -- loading leaves it
+        elseif a and a.type == "spell" then
             local _, id = L.spellInfo(a.name or a.id)
             if id and known(id) then
                 holds = "spell:" .. id
@@ -381,12 +435,6 @@ end
 -- first edit of a loadout keeps a copy of it, so Revert changes can put it back until the window closes.
 L.MACRO_TEXT, L.MACRO_NAME = 255, 16
 L.MACRO_CAPS = {character = CHARACTER_MACROS, account = ACCOUNT_MACROS}
-local function copy(v)
-    if type(v) ~= "table" then return v end
-    local t = {}
-    for k, x in pairs(v) do t[k] = copy(x) end
-    return t
-end
 local before = {} -- loadout -> its copy from before this window session's first edit
 local function track(lo)
     if not before[lo] then
@@ -541,6 +589,16 @@ function L.unbind(lo, command, key)
     end
 end
 
+-- Ignored slots: loading never touches them. on (true or false) for each slot in slots.
+function L.setIgnored(lo, slots, on)
+    track(lo)
+    lo.ignored = lo.ignored or {}
+    for _, slot in ipairs(slots) do
+        if type(slot) == "number" and slot >= 1 and slot <= L.SLOTS then lo.ignored[slot] = on or nil end
+    end
+    if not next(lo.ignored) then lo.ignored = nil end
+end
+
 -- Settings: only ones the loadout already holds. 0/1 stay 0/1, numbers stay numbers. Returns true, or nil and why.
 function L.settingKind(value)
     if value == "0" or value == "1" then return "toggle" end
@@ -583,6 +641,12 @@ function L.settingName(name) return SETTING_NAMES[name] or name end
 function L.iconPath(icon)
     if type(icon) == "string" and not icon:find("\\", 1, true) then return "Interface\\Icons\\" .. icon end
     return icon or 134400
+end
+
+-- "Any class": loads on any class without the other-class warning (spells it can't use wait or are left out as ever)
+function L.setAnyClass(lo, on)
+    track(lo)
+    lo.anyClass = on and true or nil
 end
 
 function L.removeSetting(lo, name)
@@ -641,6 +705,34 @@ L.READY = {
             return "/petattack [@mouseover,harm,nodead][]"
         end},
 }
+-- Class templates: shown first in the macros window (MacrosWindow.lua) for their class, not in a loadout's gallery.
+-- defaults fill their options before the shared ones.
+local function mouseoverHeal(class, spell)
+    return {kind = "heal" .. class:lower(), class = class, name = "Mouseover heal", icon = 135907, options = {"spell"},
+        defaults = {spell = spell}, text = "Heals the friend under your mouse, else your friendly target, else you.",
+        make = function(o) return L.READY.mouseover.make({spell = o.spell, target = "help"}) end}
+end
+for _, r in ipairs({
+    {kind = "shardcast", class = "WARLOCK", name = "Soul Shard cast", icon = 134075, options = {"spell"},
+        defaults = {spell = "Create Healthstone"},
+        text = "Casts a spell that takes a Soul Shard, and says so on screen when you have none left.",
+        make = function(o)
+            return ('#showtooltip %s\n/run if C_Item.GetItemCount(6265) == 0 then UIErrorsFrame:AddMessage("No Soul '
+                .. 'Shards", 1, 0.1, 0.1) end\n/cast %s'):format(spellOf(o), spellOf(o))
+        end},
+    {kind = "warlockpet", class = "WARLOCK", name = "Demon attack and cast", icon = 136218, options = {"spell"},
+        defaults = {spell = "Corruption"},
+        text = "Sends your demon at your mouseover or target and casts the spell on it.",
+        make = function(o)
+            return ("#showtooltip\n/petattack [@mouseover,harm,nodead,exists][]\n/cast [@mouseover,harm,nodead,exists][] %s")
+                :format(spellOf(o))
+        end},
+    {kind = "autoshot", class = "HUNTER", name = "Auto Shot and cast", icon = 132222, options = {"spell"},
+        defaults = {spell = "Arcane Shot"}, text = "Starts Auto Shot (without turning it off) and casts the spell.",
+        make = function(o) return ("#showtooltip\n/cast !Auto Shot\n/cast %s"):format(spellOf(o)) end},
+    mouseoverHeal("PRIEST", "Flash Heal"), mouseoverHeal("PALADIN", "Flash of Light"),
+    mouseoverHeal("DRUID", "Healing Touch"), mouseoverHeal("SHAMAN", "Healing Wave"),
+}) do L.READY[#L.READY + 1] = r end
 for _, r in ipairs(L.READY) do L.READY[r.kind] = r end
 -- Each option: what it is (spell, choice, check or text), its label, its choices and its default
 L.READY_OPTIONS = {
@@ -654,12 +746,14 @@ L.READY_OPTIONS = {
     slot13 = {type = "check", label = "Top trinket (13)", default = true},
     slot14 = {type = "check", label = "Bottom trinket (14)", default = false},
     pet = {type = "choice", label = "Pet", default = "attack", choices = {{"attack", "Attack"}, {"follow", "Follow"}}},
+    after = {type = "text", label = "Typed after it", default = "", prompt = "Optional"}, -- a /ku command's words
 }
--- A ready-made macro's options, filled with the defaults
+-- A ready-made macro's options, filled with the defaults (the kind's own first)
 function L.readyOptions(kind, options)
-    local o = {}
-    for _, key in ipairs(L.READY[kind].options) do
+    local o, r = {}, L.READY[kind]
+    for _, key in ipairs(r.options) do
         local v = options and options[key]
+        if v == nil and r.defaults then v = r.defaults[key] end
         if v == nil then v = L.READY_OPTIONS[key].default end
         o[key] = v
     end
@@ -696,8 +790,12 @@ end
 -- Sharing: a loadout as one line of text, "KU1:" and its table. Strings are quoted, with %XX for " and % and for
 -- anything outside printable ASCII; numbers are n<number>; booleans T and F; tables {key value key value ...}.
 -- A loadout using what versions before editing don't know (account macros, ready-made macros, more than 36 macros)
--- starts "KU2:" instead, the same format, so those versions refuse it rather than load part of it.
-local PREFIX, PREFIX2, OLD_MACROS = "KU1:", "KU2:", 36
+-- starts "KU2:" instead, the same format, so those versions refuse it rather than load part of it. One for any class
+-- or with ignored slots starts "KU3:", so versions reading only KU2 refuse it rather than load over ignored slots.
+local PREFIX, PREFIX2, PREFIX3, OLD_MACROS = "KU1:", "KU2:", "KU3:", 36
+local function needsKU3(lo)
+    return lo.anyClass or lo.ignored and next(lo.ignored) ~= nil or lo.rules and #lo.rules > 0
+end
 local function needsKU2(lo)
     if #lo.macros > OLD_MACROS then return true end
     for _, m in ipairs(lo.macros) do
@@ -726,8 +824,9 @@ end
 function L.export(lo)
     local out = {}
     encode({name = lo.name, class = lo.class, className = lo.className, from = lo.from, created = lo.created,
-        actions = lo.actions, macros = lo.macros, bindings = lo.bindings, cvars = lo.cvars, bars = lo.bars}, out)
-    return (needsKU2(lo) and PREFIX2 or PREFIX) .. table.concat(out)
+        actions = lo.actions, macros = lo.macros, bindings = lo.bindings, cvars = lo.cvars, bars = lo.bars,
+        anyClass = lo.anyClass, ignored = lo.ignored, rules = lo.rules}, out)
+    return (needsKU3(lo) and PREFIX3 or needsKU2(lo) and PREFIX2 or PREFIX) .. table.concat(out)
 end
 
 -- Reads the text as data only, never as code: a value, or an error. Depth and size are capped.
@@ -807,6 +906,36 @@ local function check(t)
     end
     if t.created ~= nil and not int(t.created, 0, 2 ^ 40) then return nil end
     lo.created = t.created or time()
+    if t.anyClass ~= nil and type(t.anyClass) ~= "boolean" then return nil end
+    lo.anyClass = t.anyClass or nil
+    if t.ignored ~= nil then
+        if type(t.ignored) ~= "table" or not size(t.ignored, L.SLOTS) then return nil end
+        lo.ignored = {}
+        for slot, on in pairs(t.ignored) do
+            if not (int(slot, 1, L.SLOTS) and on == true) then return nil end
+            lo.ignored[slot] = true
+        end
+        if not next(lo.ignored) then lo.ignored = nil end
+    end
+    if t.rules ~= nil then -- each rule checked field by field; their ids are given on import
+        if type(t.rules) ~= "table" or size(t.rules, L.MAX_RULES) ~= #t.rules then return nil end
+        lo.rules = {}
+        local TRIGGER = {new = true, login = true, level = true, spell = true}
+        for i, r in ipairs(t.rules) do
+            if not (type(r) == "table" and TRIGGER[r.trigger] and (r.level == nil or int(r.level, 1, 100))
+                and (r.spell == nil or str(r.spell, 100)) and (r.names == nil or str(r.names, 500))
+                and (r.classes == nil or type(r.classes) == "table" and size(r.classes, 20))) then return nil end
+            local rule = {trigger = r.trigger, level = r.level, spell = r.spell, names = r.names,
+                except = r.except == true or nil, ask = r.ask == true or nil}
+            for class, on in pairs(r.classes or {}) do
+                if not (str(class, 20) and class:find("^%u+$") and on == true) then return nil end
+                rule.classes = rule.classes or {}
+                rule.classes[class] = true
+            end
+            lo.rules[i] = rule
+        end
+        if #lo.rules == 0 then lo.rules = nil end
+    end
     if not size(t.actions, L.SLOTS) then return nil end
     for slot, a in pairs(t.actions) do
         if not (int(slot, 1, L.SLOTS) and type(a) == "table" and str(a.type, 32) and a.type:find("^%a+$")
@@ -856,7 +985,8 @@ end
 function L.decode(text)
     if type(text) ~= "string" or #text > L.MAX_IMPORT then return nil, NOT_A_LOADOUT end
     text = text:gsub("[\r\n]", "") -- a paste may wrap the line
-    if text:sub(1, #PREFIX) ~= PREFIX and text:sub(1, #PREFIX2) ~= PREFIX2 then return nil, NOT_A_LOADOUT end
+    local prefix = text:sub(1, #PREFIX)
+    if prefix ~= PREFIX and prefix ~= PREFIX2 and prefix ~= PREFIX3 then return nil, NOT_A_LOADOUT end
     local ok, t = pcall(decode, text:sub(#PREFIX + 1))
     local lo = ok and check(t)
     if not lo then return nil, NOT_A_LOADOUT end
@@ -869,6 +999,7 @@ function L.import(text, name)
     if not lo then return nil, why end
     lo.name = name ~= nil and name ~= "" and name or lo.name ~= "" and lo.name or "Imported"
     lo.updated = time()
+    lo.rules = L.rulesOff(lo.rules) -- shared rules come in off: you turn on the ones you want
     local db = ns.db.loadouts
     local id = db.nextId
     db.nextId = id + 1
@@ -900,13 +1031,290 @@ function L.fillPending()
     if L.changed then L.changed() end
 end
 
+-- Apply automatically: each loadout's rules ({id, trigger, level, spell, classes, names, except, ask, off}) load it
+-- by themselves. A trigger: "new" (a new character: a level 1 character's first login, decided once per character,
+-- KureqUtilsCharDB.loadoutsDefaultDone; by itself only with 0 XP and no earlier record in Kureq Utils, else it asks),
+-- "login" (every real login, never a reload; nothing when loading would change nothing), "level" (reaching exactly
+-- that level) or "spell" (learning that spell, by name). Level and spell fire once per character per rule
+-- (KureqUtilsCharDB.loadoutRules[id]). classes (none = any) and names (only these, or all but these when except)
+-- narrow it; ask asks first; off turns it off. Rules firing together apply in the list's order, out of combat, each
+-- after a backup, with the bindings in the character's own key set.
+L.TRIGGERS = {{"new", "New character"}, {"login", "Every login"}, {"level", "Reaching level"},
+    {"spell", "Learning a spell"}}
+L.MAX_RULES = 10
+-- the loadouts in the list's order: newest first
+function L.sorted()
+    local out = {}
+    for id, lo in pairs(L.list()) do out[#out + 1] = {id = id, lo = lo} end
+    table.sort(out, function(a, b)
+        local ta, tb = a.lo.updated or a.lo.created, b.lo.updated or b.lo.created
+        if ta ~= tb then return ta > tb end
+        return a.id > b.id
+    end)
+    return out
+end
+local function newRuleId()
+    local db = ns.db.loadouts
+    db.nextRule = (db.nextRule or 0) + 1
+    return db.nextRule
+end
+-- a copy of lo's rules with new ids, all off (a clone or an import doesn't load by itself until you turn it on)
+function L.rulesOff(rules)
+    if not rules then return nil end
+    local out = copy(rules)
+    for _, r in ipairs(out) do r.id, r.off = newRuleId(), true end
+    return out
+end
+local function spellKnown(name)
+    local _, id = L.spellInfo(ns.trim(name or ""))
+    return id ~= nil and known(id)
+end
+local seen = {} -- rule id -> whether its spell was known when last looked at, this session
+function L.addRule(lo)
+    lo.rules = lo.rules or {}
+    if #lo.rules >= L.MAX_RULES then return nil, ("A loadout holds %d rules at most."):format(L.MAX_RULES) end
+    track(lo)
+    tinsert(lo.rules, {id = newRuleId(), trigger = "new"})
+    return #lo.rules
+end
+-- Changes rule i: fields as in a rule, false clears one. A spell set now that you already know never fires here.
+function L.setRule(lo, i, fields)
+    local r = lo.rules and lo.rules[i]
+    if not r then return end
+    track(lo)
+    for k, v in pairs(fields) do
+        if v == false then r[k] = nil else r[k] = v end
+    end
+    if r.trigger == "spell" and (fields.spell ~= nil or fields.trigger or fields.off ~= nil) then
+        seen[r.id] = spellKnown(r.spell) -- what learning it is measured against
+        if seen[r.id] then ns.charDB.loadoutRules[r.id] = true end -- known already: never fires here
+    end
+end
+function L.removeRule(lo, i)
+    if not (lo.rules and lo.rules[i]) then return end
+    track(lo)
+    table.remove(lo.rules, i)
+    if #lo.rules == 0 then lo.rules = nil end
+end
+-- What a rule does, in a few words: "every login", "reaching level 10", "learning Frostbolt"
+function L.ruleText(r)
+    if r.trigger == "level" then return "reaching level " .. tostring(r.level or "?") end
+    if r.trigger == "spell" then return "learning " .. (r.spell and r.spell ~= "" and r.spell or "a spell") end
+    return r.trigger == "login" and "every login" or "a new character"
+end
+function L.hasRules(lo)
+    for _, r in ipairs(lo.rules or {}) do
+        if not r.off then return true end
+    end
+    return false
+end
+
+local function nameKey(name) return ns.notes and ns.notes.key and ns.notes.key(name) or ns.trim(name):lower() end
+-- whether rule r is on and fits this character
+local function fits(r)
+    if r.off then return false end
+    local _, class = UnitClass("player")
+    if r.classes and next(r.classes) and not r.classes[class] then return false end
+    local names = {}
+    for part in (r.names or ""):gmatch("[^,\n]+") do -- two-part names ("Ku Req") stay whole
+        if ns.trim(part) ~= "" then names[nameKey(part)] = true end
+    end
+    if not next(names) then return true end
+    local me = ns.notes and ns.notes.unitName and ns.notes.unitName("player") or UnitName("player")
+    local listed = me ~= nil and names[nameKey(me)] == true
+    if r.except then return not listed end
+    return listed
+end
+-- The loadouts with a rule that fits now and passes test(r), in list order, one rule each: {id, rule}
+local function due(test)
+    local out, taken = {}, {}
+    for _, item in ipairs(L.sorted()) do
+        for _, r in ipairs(item.lo.rules or {}) do
+            if fits(r) and test(r) and not taken[item.id] then
+                taken[item.id] = true
+                out[#out + 1] = {id = item.id, rule = r}
+            end
+        end
+    end
+    return out
+end
+local function fired() return ns.charDB.loadoutRules end
+
+-- Whether loading lo (all of it) would change anything here: its bars, macros' text, keys, settings or bar toggles
+local function sameKeys(a, b)
+    local n = {}
+    for _, k in pairs(a or {}) do n[k] = (n[k] or 0) + 1 end
+    for _, k in pairs(b or {}) do n[k] = (n[k] or 0) - 1 end
+    for _, c in pairs(n) do if c ~= 0 then return false end end
+    return true
+end
+function L.wouldChange(lo)
+    if L.preview(lo).changes > 0 then return true end
+    for _, m in ipairs(lo.macros) do
+        local i = macroIndex(m.name, m.account)
+        if not i or select(3, GetMacroInfo(i)) ~= m.body then return true end
+    end
+    local now = {}
+    for i = 1, GetNumBindings() do
+        local command, _, key1, key2 = GetBinding(i)
+        if command and (key1 or key2) then now[command] = {key1, key2} end
+    end
+    for command in pairs(macroCommands(lo)) do
+        local keys = macroKeys(command)
+        if #keys > 0 then now[command] = keys end
+    end
+    for command, keys in pairs(lo.bindings) do
+        if not sameKeys(keys, now[command]) then return true end
+    end
+    for command in pairs(now) do
+        if not lo.bindings[command] then return true end
+    end
+    for name, value in pairs(lo.cvars) do
+        local v = C_CVar and C_CVar.GetCVarInfo and C_CVar.GetCVarInfo(name)
+        if v ~= nil and v ~= value then return true end
+    end
+    if lo.bars and GetActionBarToggles then
+        local t = {GetActionBarToggles()}
+        for i, on in ipairs(lo.bars) do
+            if (t[i] and true or false) ~= on then return true end
+        end
+    end
+    return false
+end
+
+-- Kureq Utils had a record of this character before this login (even an empty one): kill stats, loadout backups or
+-- waiting spells. Taken as saved variables load, before any utility starts a record for it (onLoad below, first).
+local recorded = {guids = {}, names = {}}
+tinsert(ns.onLoad, 1, function(root)
+    local loadouts, kills = type(root.loadouts) == "table" and root.loadouts or {}, root.killStats
+    for _, part in ipairs({"backups", "pending"}) do
+        for guid in pairs(type(loadouts[part]) == "table" and loadouts[part] or {}) do recorded.guids[guid] = true end
+    end
+    for key in pairs(type(kills) == "table" and kills or {}) do recorded.names[key] = true end
+end)
+local function knownBefore()
+    return recorded.guids[charKey() or "?"] or ns.stats and ns.stats.myKey and recorded.names[ns.stats.myKey()]
+        or false
+end
+-- a new character's rule loads by itself only when it's still fresh: no XP, no earlier record
+local function fresh() return not knownBefore() and (UnitXP("player") or 0) == 0 end
+
+-- The rules waiting to apply, in order ({id, rule, ask, answer}); one at a time, asking where it should
+local queue = {}
+local POPUP = "KUREQUTILS_LOADOUT_RULE"
+local step
+local function current(item) -- the loadout and rule, if both are still there and on
+    local lo = L.list()[item.id]
+    for _, r in ipairs(lo and lo.rules or {}) do
+        if r == item.rule and not r.off then return lo, r end
+    end
+end
+local function applyRule(lo, r)
+    local report, why = L.load(lo, nil, true)
+    if report then
+        ns.say("loaded %s (its rule: %s). To undo it, restore the newest backup in /ku loadouts.", lo.name,
+            L.ruleText(r))
+    else
+        ns.say("didn't load %s (its rule: %s): %s.", lo.name, L.ruleText(r), why)
+    end
+    if L.changed then L.changed() end
+end
+local showing -- the item whose popup is up; the next one shows after it has closed
+local function ask(item, lo, r)
+    if showing then return end
+    showing = item
+    StaticPopupDialogs[POPUP] = {
+        text = ("Load your loadout %s on this character? Its rule: %s."):format((lo.name:gsub("%%", "%%%%")),
+            (L.ruleText(r):gsub("%%", "%%%%"))),
+        button1 = "Load", button2 = "Not now", timeout = 0, whileDead = true, hideOnEscape = true,
+        OnAccept = function() item.answer = true end,
+        OnCancel = function() item.answer = false end,
+        OnHide = function()
+            if showing ~= item then return end
+            showing = nil
+            if item.answer == nil then item.answer = false end -- closed some other way: as Not now
+            C_Timer.After(0, step)
+        end}
+    if not StaticPopup_Show(POPUP) then -- every popup frame busy: Blizzard cancels without OnHide, so try again later
+        showing, item.answer = nil, nil
+        C_Timer.After(5, step)
+    end
+end
+step = function()
+    if not ns.IsOn("loadouts") then return wipe(queue) end
+    if InCombatLockdown() then return ns.CombatQueue.Defer("loadoutRules", step) end
+    while queue[1] do
+        local item = queue[1]
+        local lo, r = current(item)
+        local gone = not lo or not fits(r) or r.trigger == "new" and UnitLevel("player") ~= 1
+        if not gone and r.trigger == "new" and not fresh() then item.ask = true end -- no longer fresh: asks
+        if gone or r.trigger == "login" and not L.wouldChange(lo) then
+            table.remove(queue, 1) -- gone, or nothing left to do
+        elseif (item.ask or r.ask) and item.answer == nil then
+            return ask(item, lo, r)
+        else
+            table.remove(queue, 1)
+            if item.answer ~= false then applyRule(lo, r) end
+        end
+    end
+end
+local function run(items)
+    for _, item in ipairs(items) do queue[#queue + 1] = item end
+    if #items > 0 then step() end
+end
+
+-- Login: new character and every login rules, 3 s after a first login so the starting bars settle
+function L.onLogin(isInitialLogin)
+    if not isInitialLogin then return end
+    local new = not ns.charDB.loadoutsDefaultDone and UnitLevel("player") == 1
+        and #due(function(r) return r.trigger == "new" end) > 0
+    if new then ns.charDB.loadoutsDefaultDone = true end -- decided once, whatever comes of it
+    C_Timer.After(3, function()
+        if not ns.IsOn("loadouts") then return end
+        run(due(function(r) return r.trigger == "login" or new and r.trigger == "new" end))
+    end)
+end
+function L.onLevel(level)
+    local done = fired()
+    run(due(function(r)
+        if r.trigger ~= "level" or done[r.id] or r.level ~= level then return false end
+        done[r.id] = true
+        return true
+    end))
+end
+-- a spell rule fires when its spell goes from unknown to known; known when first looked at, it never fires here
+function L.onSpells()
+    local done = fired()
+    run(due(function(r)
+        if r.trigger ~= "spell" or done[r.id] then return false end
+        local now, was = spellKnown(r.spell), seen[r.id]
+        seen[r.id] = now
+        if now then done[r.id] = true end
+        return now and was == false
+    end))
+end
+
 local events = CreateFrame("Frame")
-for _, e in ipairs({"SPELLS_CHANGED", "LEARNED_SPELL_IN_TAB"}) do
+for _, e in ipairs({"SPELLS_CHANGED", "LEARNED_SPELL_IN_TAB", "PLAYER_ENTERING_WORLD", "PLAYER_LEVEL_UP"}) do
     pcall(events.RegisterEvent, events, e) -- a client without one of them just doesn't send it
 end
-events:SetScript("OnEvent", function() if ns.db and ns.IsOn("loadouts") then L.fillPending() end end)
+events:SetScript("OnEvent", function(_, event, arg)
+    if not (ns.db and ns.IsOn("loadouts")) then return end
+    if event == "PLAYER_ENTERING_WORLD" then
+        L.onLogin(arg)
+    elseif event == "PLAYER_LEVEL_UP" then
+        return L.onLevel(arg)
+    end
+    L.onSpells()
+    L.fillPending()
+end)
 -- on again: spells learned while off go on now (in combat fillPending waits for it to end)
-ns.OnModuleChange("loadouts", function(on) if on then L.fillPending() end end)
+ns.OnModuleChange("loadouts", function(on)
+    if on then return L.fillPending() end
+    wipe(queue)
+    showing = nil
+    StaticPopup_Hide(POPUP)
+end)
 
 tinsert(ns.onLoad, function(root)
     local db = root.loadouts
@@ -914,6 +1322,15 @@ tinsert(ns.onLoad, function(root)
     db.pending = type(db.pending) == "table" and db.pending or {}
     db.backups = type(db.backups) == "table" and db.backups or {}
     db.nextId = db.nextId or 1
+    -- the single "Default for new characters" of earlier test builds becomes a New character rule
+    if type(db.default) == "number" and type(db.list[db.default]) == "table" then
+        local lo = db.list[db.default]
+        lo.rules = type(lo.rules) == "table" and lo.rules or {}
+        tinsert(lo.rules, {id = newRuleId(), trigger = "new"})
+    end
+    db.default = nil
+    local char = ns.charDB
+    char.loadoutRules = type(char.loadoutRules) == "table" and char.loadoutRules or {}
 end)
 
 ns.AddCommand("loadouts", "/ku loadouts - opens or closes the loadouts window", function() L.toggle() end, "loadouts")

@@ -9,12 +9,14 @@ local fmt, tinsert, tremove, floor = string.format, table.insert, table.remove, 
 local say, trim = ns.say, ns.trim
 
 local BUTTON = "KureqUtilsDeleteButton"
-local QUEST_ITEM, WEAPON, ARMOR = 12, 2, 4 -- item class IDs
+local QUEST_ITEM, WEAPON, ARMOR, PROJECTILE = 12, 2, 4, 6 -- item class IDs (Enum.ItemClass)
+local SOUL_SHARD = 6265
 local UNITS = {g = 10000, s = 100, c = 1}
 
 ns.defaults.delete = {maxQuality = 0, keepQuest = true, keepGear = false, unsellable = false, maxValue = 0,
-    never = {6948}, always = {}, fullPrompt = true, markLoot = true, confirm = false, -- 6948: Hearthstone
-    neverRules = {}, alwaysRules = {}} -- name rules: {kind = "starts"|"ends"|"contains"|"pattern", text = "..."}
+    never = {6948}, always = {}, fullPrompt = true, markLoot = true, confirm = false, reagentBag = false, -- 6948: Hearthstone
+    neverRules = {}, alwaysRules = {}, -- name rules: {kind = "starts"|"ends"|"contains"|"pattern", text = "..."}
+    maxShards = 0, specialBags = false, oldAmmo = false, maxAmmoStacks = 0} -- class bags; 0 = off
 
 -- this client moved these into C_Item / C_CurrencyInfo; the globals are the older fallback
 local GetItemInfo = C_Item and C_Item.GetItemInfo or _G.GetItemInfo
@@ -295,37 +297,70 @@ local function moneyText(copper)
     return table.concat(parts, " ")
 end
 
--- The allowed bag item with the lowest vendor value: {bag, slot, id, count, link, value}.
--- The never list and rules always win; the always list and rules skip the other limits.
+local function cheaper(a, b) return not a or b.value < a.value end
+-- Bag families are bit fields: 1 quiver (arrows), 2 ammo pouch (bullets), 4 soul bag; profession bags use higher bits.
+local function classBag(family) return family and family > 0 and family < 8 end
+
+-- What the delete key removes next: {bag, slot, id, count, link, name, value, why}. First an extra Soul Shard, then
+-- old ammo, then an extra ammo stack (these also look in quivers, ammo pouches and soul bags; why says which), else the allowed bag item with the
+-- lowest vendor value. The never list and rules always win; the always list and rules skip the other limits.
 local function cheapest()
     local never, always = itemSet(db.never), itemSet(db.always)
-    local best
-    for bag = 0, NUM_BAG_SLOTS or 4 do
+    local best, shard, old, stacks, shards = nil, nil, nil, {}, 0
+    local ammo = GetInventoryItemID and GetInventoryItemID("player", INVSLOT_AMMO or 0)
+    local ammoLevel = ammo and select(4, GetItemInfo(ammo))
+    local reagent = (NUM_BAG_SLOTS or 4) + 1 -- Forever's reagent bag
+    for bag = 0, (NUM_BAG_SLOTS or 4) + (NUM_REAGENTBAG_SLOTS or 0) do
         local _, bagType = numFree(bag)
-        for slot = 1, bagType == 0 and numSlots(bag) or 0 do -- normal bags only: no quivers or soul bags
+        -- normal: the cheapest item may come from here (normal bags; class bags and the reagent bag when ticked);
+        -- class: shards and ammo may (normal and class bags; the reagent bag when ticked). Profession bags: neither.
+        local inBags, class = bag < reagent, classBag(bagType)
+        local normal = inBags and (bagType == 0 or db.specialBags and class) or not inBags and db.reagentBag
+        local classScan = normal or inBags and class
+        for slot = 1, classScan and numSlots(bag) or 0 do
             local id, count, locked, link = slotItem(bag, slot)
+            if id == SOUL_SHARD then shards = shards + (count or 1) end -- every shard carried, locked or kept
             if id and not locked then
-                local name, _, quality, _, _, _, _, _, _, _, price, classID, _, bindType = GetItemInfo(id)
+                local name, _, quality, level, _, _, _, _, _, _, price, classID, _, bindType = GetItemInfo(id)
                 if name then
                     local key = name:lower()
                     price, count = price or 0, count or 1
                     local value = price * count
                     local tip = slotTip(bag, slot)
                     local keep = never[id] or never[key] or anyRule(db.neverRules, name, tip, true)
-                    local allowed = not keep and (always[id] or always[key] or anyRule(db.alwaysRules, name, tip, false) or (
+                    local it = {bag = bag, slot = slot, id = id, count = count, link = link or name, name = name, value = value,
+                        normalBag = inBags and bagType == 0}
+                    if not keep and id == SOUL_SHARD then
+                        if cheaper(shard, it) then shard = it end
+                    elseif not keep and classID == PROJECTILE and id ~= ammo then
+                        stacks[#stacks + 1] = it
+                        if ammoLevel and level and level < ammoLevel and cheaper(old, it) then old = it end
+                    end
+                    local allowed = normal and not keep and (always[id] or always[key]
+                        or anyRule(db.alwaysRules, name, tip, false) or (
                         (quality or 0) <= db.maxQuality
                         and (price > 0 or db.unsellable)
                         and not (db.keepQuest and (classID == QUEST_ITEM or bindType == 4 or questSlot(bag, slot)))
                         and not (db.keepGear and (classID == WEAPON or classID == ARMOR))
                         and (db.maxValue == 0 or value <= db.maxValue)))
-                    if allowed and (not best or value < best.value) then
-                        best = {bag = bag, slot = slot, id = id, count = count, link = link or name, name = name, value = value}
-                    end
+                    if allowed and cheaper(best, it) then best = it end
                 end
             end
         end
     end
+    if db.maxShards > 0 and shards > db.maxShards and shard then shard.why = "extra Soul Shard"; return shard end
+    if db.oldAmmo and old then old.why = "old ammo"; return old end
+    if db.maxAmmoStacks > 0 and #stacks > db.maxAmmoStacks then
+        table.sort(stacks, function(a, b) return a.value < b.value end)
+        stacks[1].why = "extra ammo stack"
+        return stacks[1]
+    end
     return best
+end
+
+-- "[Item] x5", and why when it isn't simply the cheapest: "[Soul Shard] x1 (extra Soul Shard)"
+local function what(item)
+    return fmt("%s x%d%s", item.link, item.count, item.why and " (" .. item.why .. ")" or "")
 end
 
 -- Statistics are saved for all characters: totals, per character, and per item.
@@ -357,7 +392,7 @@ local function deleteCheapest()
         if not (p and GetTime() - p.t <= 10 and p.bag == item.bag and p.slot == item.slot and p.id == item.id
             and p.count == item.count) then -- a new item, a changed stack or too late: name it again
             item.t, pending = GetTime(), item
-            return say("press again to delete %s x%d, worth %s", item.link, item.count, money(item.value))
+            return say("press again to delete %s, worth %s", what(item), money(item.value))
         end
     end
     pickup(item.bag, item.slot)
@@ -372,7 +407,7 @@ local function deleteCheapest()
         return say("WoW didn't delete %s; it's back in your bags", item.link)
     end
     record(item)
-    say("deleted %s x%d, worth %s. Deleted so far: %s", item.link, item.count, money(item.value), money(db.stats.value))
+    say("deleted %s, worth %s. Deleted so far: %s", what(item), money(item.value), money(db.stats.value))
     refreshNext()
     refreshStats()
 end
@@ -392,7 +427,10 @@ local function bagsFull()
     lastPrompt, hinted = GetTime(), lootOpen
     local item = cheapest()
     if not item then return say("bags full, and nothing is allowed to be deleted (rules: /ku)") end
-    say("bags full: %s to delete %s x%d, worth %s", deleteHow(), item.link, item.count, money(item.value))
+    if not item.normalBag then -- a quiver, soul bag or reagent bag deletion makes no room for loot
+        return say("bags full: the delete key's next item, %s, doesn't free a bag slot", what(item))
+    end
+    say("bags full: %s to delete %s, worth %s", deleteHow(), what(item), money(item.value))
 end
 
 -- Loot window --------------------------------------------------------------------------------
@@ -411,7 +449,7 @@ function ns.betterLoot(loot, item, free)
     return notes
 end
 
-local function freeSlots() -- the bags cheapest() scans
+local function freeSlots() -- normal bags, where loot goes
     local free = 0
     for bag = 0, NUM_BAG_SLOTS or 4 do
         local n, bagType = numFree(bag)
@@ -472,6 +510,7 @@ local function refreshLoot()
     if lootOpen and db and db.markLoot and ns.IsOn("delete") then
         local free = freeSlots()
         local item = free == 0 and cheapest() or nil
+        if item and not item.normalBag then item = nil end -- deleting from a quiver or the reagent bag frees no room for loot
         notes = ns.betterLoot(lootSlots(), item, free)
         if next(notes) and not hinted then
             hinted = true
@@ -493,14 +532,14 @@ ns.AddCommand("delete", "/ku delete - delete the cheapest allowed bag item now",
 
 local panel = ns.AddSettingsPage("Delete items",
     "Deletes the bag item with the lowest vendor value among the ones allowed here. Bind a key in Key Bindings "
-        .. "> AddOns > Kureq Utils, or type /ku delete. Quivers and soul bags are left alone. While your bags are full, "
+        .. "> AddOns > Kureq Utils, or type /ku delete. Quivers and soul bags are left alone unless you tick Look in special bags. While your bags are full, "
         .. "the loot window marks loot worth more than it.", "delete")
 
 local nextLine, totalLine
 function refreshNext()
     if not (db and nextLine and panel:IsVisible()) then return end
     local item = cheapest()
-    nextLine:SetText(item and fmt("%s x%d, worth %s", item.link, item.count, money(item.value)) or "nothing is allowed")
+    nextLine:SetText(item and fmt("%s, worth %s", what(item), money(item.value)) or "nothing is allowed")
     totalLine:SetText("Deleted so far: " .. money(db.stats.value) .. " (see Deletion statistics)")
 end
 local function changed() ns.refresh(panel) end
@@ -522,6 +561,10 @@ ns.Checkbox(panel, "Keep weapons and armor", "Never delete weapons or armor.",
 ns.Checkbox(panel, "Delete unsellable items",
     "May delete items with no vendor price. Off keeps them, such as keys and quest items.",
     function() return db and db.unsellable end, function(v) db.unsellable = v; changed() end)
+
+ns.Checkbox(panel, "Look in the reagent bag",
+    "May delete from your reagent bag too (cloth, herbs, ore and other crafting materials there).",
+    function() return db and db.reagentBag end, function(v) db.reagentBag = v; changed() end)
 
 ns.Checkbox(panel, "Press twice to delete",
     "The first press says in chat what would be deleted; press again within 10 seconds to delete it.",
@@ -565,6 +608,32 @@ for _, l in ipairs({
         function(i) tremove(db[rules], i) end,
         function(r) return r.kind == "pattern" and not validPattern(r.text) and "(invalid pattern)" or nil end)
 end
+
+ns.Header(panel, "Class bags")
+
+local function countBox(label, tooltip, field)
+    ns.EditBox(panel, label, tooltip .. " 0 means off.", function() return db and tostring(db[field]) end,
+        function(text)
+            local n = tonumber(trim(text))
+            if not (n and n >= 0 and n == floor(n)) then return say("%s: write a whole number, 0 for off", label) end
+            db[field] = n
+            changed()
+        end)
+end
+local CLASS_SCAN = " Looks in quivers, ammo pouches and soul bags even with Look in special bags off, and in the "
+    .. "reagent bag only when that's ticked."
+countBox("Keep at most this many Soul Shards",
+    "While you carry more Soul Shards than this, the delete key deletes one first, before anything else." .. CLASS_SCAN,
+    "maxShards")
+ns.Checkbox(panel, "Look in special bags",
+    "May delete from quivers, ammo pouches and soul bags too, under the rules above. Profession bags stay closed.",
+    function() return db and db.specialBags end, function(v) db.specialBags = v; changed() end)
+ns.Checkbox(panel, "Delete old ammo",
+    "Ammo of a lower item level than the ammo you have equipped goes before the cheapest item, cheapest first."
+        .. CLASS_SCAN, function() return db and db.oldAmmo end, function(v) db.oldAmmo = v; changed() end)
+countBox("Keep at most this many ammo stacks",
+    "Stacks of ammo other than the kind you have equipped, over this many, go before the cheapest item, cheapest first."
+        .. CLASS_SCAN, "maxAmmoStacks")
 
 ns.Header(panel, "Full bags")
 
@@ -637,7 +706,7 @@ search:SetPoint("LEFT", 6, 0)
 search:SetSize(160, 20)
 search:SetAutoFocus(false)
 search:HookScript("OnTextChanged", function() refreshStats() end)
-local charMenu = St.MenuButton(bar, 170, function() return who or "All characters" end, function(root)
+local charMenu = St.Dropdown(bar, 170, function() return who or "All characters" end, function(root)
     local function radio(text, key)
         root:CreateRadio(text, function() return who == key end, function() who = key; refreshStats() end, key or false)
     end

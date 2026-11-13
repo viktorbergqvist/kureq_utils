@@ -32,9 +32,8 @@ local function Button(parent, text, w, onClick)
     return b
 end
 local function Box(parent, w, letters)
-    local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-    box:SetSize(w, 20)
-    box:SetAutoFocus(false)
+    local box = St.EditBox(parent)
+    box:SetWidth(w)
     box:SetMaxLetters(letters)
     box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
@@ -146,8 +145,7 @@ title:SetPoint("RIGHT", -140, 0)
 local facts = Text(editor, "GameFontDisableSmall")
 facts:SetPoint("TOPLEFT", 12, -34)
 facts:SetPoint("RIGHT", -12, 0)
-local onBox = CreateFrame("CheckButton", nil, editor, "UICheckButtonTemplate")
-onBox:SetSize(24, 24)
+local onBox = St.Checkbox(editor)
 onBox:SetPoint("TOPRIGHT", -110, -8)
 onBox.Text:SetText("Use this rule")
 onBox.Text:SetFontObject("GameFontHighlight")
@@ -225,7 +223,7 @@ kindMenu:Refresh()
 local nameKind = "ends"
 local KIND_NAMES = {}
 for _, k in ipairs(ns.delete.KINDS) do KIND_NAMES[k[1]] = k[2] end
-local nameKindMenu = St.MenuButton(content, 110, function() return KIND_NAMES[nameKind] end, function(root)
+local nameKindMenu = St.Dropdown(content, 110, function() return KIND_NAMES[nameKind] end, function(root)
     for _, k in ipairs(ns.delete.KINDS) do
         root:CreateRadio(k[2], function(v) return v == nameKind end, function(v) nameKind = v; refresh() end, k[1])
     end
@@ -245,7 +243,7 @@ local addNameButton = Button(content, "Add", 60, addName)
 nameKindMenu:SetScript("OnEnter", function(self) St.Tooltip(self, "Name rules", {ns.delete.KIND_HELP}) end)
 nameKindMenu:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-local qualityMenu = St.MenuButton(content, 200, function()
+local qualityMenu = St.Dropdown(content, 200, function()
     local r, names = chosen(), {}
     for _, q in ipairs(M.QUALITIES) do if r and r.qualities[q[1]] then names[#names + 1] = q[2] end end
     return #names > 0 and table.concat(names, ", ") or "Any quality"
@@ -276,7 +274,7 @@ local lines = {}
 local function lineAt(i)
     if lines[i] then return lines[i] end
     local l = CreateFrame("Frame", nil, content)
-    l:SetSize(DETAIL_W - VALUE_X - 54, LINE_H)
+    l:SetSize(DETAIL_W - VALUE_X - 54, LINE_H) -- DETAIL_W follows the window's size
     l.text = Text(l, "GameFontHighlightSmall")
     l.text:SetPoint("LEFT")
     l.text:SetPoint("RIGHT", -80, 0)
@@ -313,12 +311,12 @@ local function refreshDetail()
     at(toLabel, content, 12, y - 4); at(toBox, content, VALUE_X + 6, y)
     y = y - 34
     at(kindLabel, content, 12, y - 4); at(kindMenu, content, VALUE_X, y)
-    y = y - 26
+    y = y - 32
     for i, k in ipairs(rule.kinds) do line(M.kindName(k), function() tremove(rule.kinds, i) end) end
     y = y - 10
     at(nameLabel, content, 12, y - 4); at(nameKindMenu, content, VALUE_X, y)
     at(nameBox, content, VALUE_X + 120, y); at(addNameButton, content, VALUE_X + 310, y)
-    y = y - 26
+    y = y - 32
     for i, r in ipairs(rule.nameRules) do
         local bad = r.kind == "pattern" and not ns.delete.validPattern(r.text) and " |cff808080(invalid pattern)|r" or ""
         line(fmt('%s: "%s"%s', KIND_NAMES[r.kind] or r.kind, r.text:gsub("|", "||"), bad),
@@ -387,7 +385,7 @@ local previewRows = {}
 local function previewRow(i)
     if previewRows[i] then return previewRows[i] end
     local r = CreateFrame("Frame", nil, previewList)
-    r:SetSize(BW - 2 * PAD - 32, 22)
+    r:SetSize(BW - 2 * PAD - 32, 22) -- BW follows the window's size
     r:SetPoint("TOPLEFT", 0, -(i - 1) * 22)
     r.icon = r:CreateTexture(nil, "ARTWORK")
     r.icon:SetSize(18, 18)
@@ -459,9 +457,19 @@ ns.OnModuleChange("mail", function(on)
     StaticPopup_Hide("KUREQUTILS_DELETE_MAIL_RULE")
 end)
 
+-- Resizing: the panes stretch on their anchors; this widens the rule's conditions and the preview's rows
+St.Resizable(frame, function(w)
+    BW = St.bodySize(w, H)
+    DETAIL_W = BW - 2 * PAD - LIST_W - GAP
+    content:SetWidth(DETAIL_W - 30)
+    for _, l in ipairs(lines) do l:SetWidth(DETAIL_W - VALUE_X - 54) end
+    previewList:SetWidth(BW - 2 * PAD - 32)
+    for _, r in ipairs(previewRows) do r:SetWidth(BW - 2 * PAD - 32) end
+end)
+
 -- what the tests drive
 M.ui = {frame = frame, rows = rows, tabs = tabs, newButton = newButton, templateMenu = templateMenu, upButton = upButton,
     downButton = downButton, deleteButton = deleteButton, toBox = toBox, onBox = onBox, kindMenu = kindMenu,
     nameKindMenu = nameKindMenu, nameBox = nameBox, addNameButton = addNameButton, qualityMenu = qualityMenu,
     keepBox = keepBox, charMenu = charMenu, lines = lines, title = title, facts = facts, previewRows = previewRows,
-    previewCount = previewCount, previewEmpty = previewEmpty, content = content}
+    previewCount = previewCount, previewEmpty = previewEmpty, content = content, detail = detail}

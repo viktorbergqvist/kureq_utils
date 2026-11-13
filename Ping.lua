@@ -1,8 +1,11 @@
--- Ping macro: keeps KureqPingCustom, a macro that targets a mob (or a quest's mobs, from Questie)
--- and pings it. Nothing acts on its own: it rewrites the macro out of combat and you press it.
--- ns.build and ns.writeMacro also serve companion addons through the KureqUtils API.
+-- KU Ping (a smart macro, part of Macros): keeps KureqPingCustom, an account macro that targets a mob (or a quest's
+-- mobs, from Questie) and pings it. Nothing acts on its own: it rewrites the macro out of combat and you press it.
+-- It's off until ticked (per character, KureqUtilsCharDB.smartMacros.on.ping); the old Ping macro module's players
+-- start ticked. Like the other smart macros it's written only while it's ours (KureqUtilsDB.ping.made, account-wide as
+-- the macro is), out of combat, with Blizzard's macro window closed and once macros are known, and a version is kept
+-- before each rewrite. ns.build and ns.writeMacro also serve companion addons through the KureqUtils API.
 local _, ns = ...
-ns.AddModule("ping", "Ping macro", "A macro that targets and pings a mob or a quest's mobs.")
+local SM = ns.macros.smart
 local CUSTOM = "KureqPingCustom"
 local fmt, tinsert = string.format, table.insert
 local say, trim = ns.say, ns.trim
@@ -13,6 +16,32 @@ local MARKERS = {"Star", "Circle", "Diamond", "Triangle", "Moon", "Square", "Cro
 
 local db
 ns.listeners = {}
+ns.ping = {switched = {}} -- fn(on) when KU Ping is ticked or unticked, or Macros turned off or on (Alert.lua)
+
+-- KU Ping is ticked (and Macros on)
+local function pingOn()
+    local s = ns.IsOn("macros") and SM.db()
+    return s and s.on.ping == true or false
+end
+ns.ping.on = pingOn
+
+-- Once per character, once macros are known: the Ping macro was its own module, on unless turned off. KU Ping starts
+-- ticked when it was on and KureqPingCustom exists, and adopts that macro as it is. Turned off, it also kept companion
+-- addons' ping macros from being written: that stays off (pingCompanionsOff).
+local function migrate()
+    local s, modules = SM.db(), ns.charDB.modules
+    if not s or s.pingMoved then return end
+    if modules.ping == false then
+        s.pingCompanionsOff = true
+    else
+        local m, twin = SM.find(CUSTOM, true)
+        if m and not twin then
+            s.on.ping = true
+            db.made = {name = CUSTOM, body = m.body}
+        end
+    end
+    s.pingMoved = true
+end
 tinsert(ns.onLoad, function(root) db = root.ping end)
 
 -- The lines after the target lines: the marker, the action, and dropping a corpse picked by them.
@@ -40,8 +69,48 @@ function ns.build(names)
     return lines .. action
 end
 
+local updateCustom, switched
+local retrying
+local function writeCustom(text)
+    if not (db and pingOn() and SM.ready) then return end -- not ready: SM.onReady writes it
+    if MacroFrame and MacroFrame:IsShown() then -- it would lose what's typed there: later
+        if not retrying then
+            retrying = true
+            C_Timer.After(SM.retry, function() retrying = false; updateCustom() end)
+        end
+        return
+    end
+    local existed = GetMacroInfo(CUSTOM)
+    local status, why = SM.keep(db, "made", CUSTOM, true, text, "Ability_Hunter_SniperShot")
+    local problem
+    if status == "ok" and not existed then
+        say("macro %s created. Drag it from your general macros to a bar.", CUSTOM)
+    elseif status == "lost" then
+        SM.db().on.ping = nil
+        problem = SM.lostText(CUSTOM)
+        say(problem)
+        switched(false)
+    elseif status == "taken" then
+        problem = ("You already have a macro called %s that Kureq Utils didn't make: rename it, and KU Ping makes its "
+            .. "own."):format(CUSTOM)
+        SM.sayOnce("pingtaken", problem)
+    elseif status == "twin" then
+        problem = ("You have two macros called %s: delete one for KU Ping to keep it up to date."):format(CUSTOM)
+        SM.sayOnce("pingtwin", problem)
+    elseif status == "full" then
+        problem = ("%s can't be made: %s"):format(CUSTOM, why)
+        SM.sayOnce("pingfull", problem)
+    end
+    SM.problems.ping = problem
+    if ns.macros.changed then ns.macros.changed() end -- the open tab, even when nothing changed
+end
+
 function ns.writeMacro(name, text)
-    if not ns.IsOn("ping") then return end
+    if not ns.IsOn("macros") then return end
+    if name == CUSTOM then return writeCustom(text) end
+    -- companion addons' macros have their own switches, and this one
+    local s = SM.db()
+    if not s or s.pingCompanionsOff then return end
     local exists = GetMacroInfo(name)
     if not exists and GetNumMacros() < 119 then
         CreateMacro(name, "Ability_Hunter_SniperShot", "")
@@ -142,11 +211,14 @@ end
 
 -- Macros can't be edited in combat; the combat queue calls this again when it ends. A quest is looked up
 -- again each time, so its finished objectives drop out. The nearby alert watches the same names.
-local function updateCustom()
-    if not (db and ns.IsOn("ping")) then return end
+function updateCustom()
+    if not (db and pingOn()) then return end
     local names = customNames()
     if names and ns.setWatch then ns.setWatch("custom", names) end
-    if not names then return end
+    if not names then
+        SM.problems.ping = "KU Ping has no target yet: type one in Custom target, use /ku ping <name>, or Alt-click a quest."
+        return
+    end
     if InCombatLockdown() then ns.CombatQueue.Defer("ping", updateCustom) else ns.writeMacro(CUSTOM, ns.build(names)) end
 end
 
@@ -157,17 +229,10 @@ local function scheduleCustom()
     C_Timer.After(2, function() scheduled = false; updateCustom() end)
 end
 
--- Settings page ------------------------------------------------------------------------------
+-- Its settings, for the Macros window's Smart macros tab (SmartMacrosWindow.lua) --------------------------------------
 
-local panel = ns.AddSettingsPage("Ping macro",
-    "These settings shape every ping macro: " .. CUSTOM .. " (/ku ping <name or quest link>) and the macros "
-        .. "of companion addons.", "ping")
-ns.ping = {panel = panel} -- Alert.lua adds its settings under the ping macro's
-
-local preview
-local function refreshPreview()
-    if preview and db then preview:SetText(ns.build(customNames() or {"<target>"})) end
-end
+-- the window shows the macro's text and what it targets: redrawn after each change
+local function refreshPreview() if ns.macros.changed then ns.macros.changed() end end
 
 local function changed()
     updateCustom()
@@ -175,52 +240,54 @@ local function changed()
     refreshPreview()
 end
 -- on again: rebuild every ping macro (each defers its own write while in combat)
-ns.OnModuleChange("ping", function(on) if on then changed() end end)
-
-ns.EditBox(panel, "Action line",
-    "What the macro does after targeting. Default: " .. ns.defaults.ping.action .. ". Must start with /. "
-        .. "Empty puts the default back.",
-    function() return db and db.action end,
-    function(text)
-        text = trim(text)
-        if text == "" then text = ns.defaults.ping.action end
-        if text:sub(1, 1) ~= "/" then return say("the action line must start with /") end
-        db.action = text
-        changed()
-    end)
-
-ns.Dropdown(panel, "Targeting command", "How each mob line targets.", {
-    {value = "/TargetExact", text = "/TargetExact (exact name)"},
-    {value = "/target", text = "/target (names that start with it)"},
-}, function() return db and db.targetCmd end, function(v) db.targetCmd = v; changed() end)
-
-local markerOptions = {{value = 0, text = "None"}}
-for i = #MARKERS, 1, -1 do
-    tinsert(markerOptions, {value = i, text = MARKERS[i], icon = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. i})
+function switched(on)
+    if on then changed() end
+    for _, fn in ipairs(ns.ping.switched) do fn(on) end
 end
-ns.Dropdown(panel, "Raid marker", "Also put this marker on the target (not on corpses). A marker that's already on stays on.",
-    markerOptions, function() return db and db.marker end, function(v) db.marker = v; changed() end)
+ns.OnModuleChange("macros", function(on) if SM.db() and SM.db().on.ping then switched(on) end end)
 
-ns.Checkbox(panel, "Clear dead targets",
-    "Clear the target when the targeting lines pick a corpse (adds /cleartarget [dead]).",
-    function() return db and db.lastTarget end, function(v) db.lastTarget = v; changed() end)
-
+local P = ns.ping
+P.NAME, P.MARKERS, P.update = CUSTOM, MARKERS, updateCustom
+P.TARGET_COMMANDS = {{"/TargetExact", "/TargetExact (exact name)"}, {"/target", "/target (names that start with it)"}}
+function P.db() return db end
+-- The macro's text as it's built now (a placeholder for the target while there's none)
+function P.preview() return db and ns.build(customNames() or {"<target>"}) or "" end
+-- KU Ping ticked or unticked
+function P.setOn(v)
+    local s = SM.db()
+    if not s then return end
+    s.on.ping = v or nil
+    if v and db then SM.adopt(db, "made", CUSTOM, true) end
+    switched(v)
+end
+-- One of targetCmd, marker, lastTarget, questClick
+function P.set(key, v)
+    if not db then return end
+    db[key] = v
+    if key ~= "questClick" then changed() else refreshPreview() end
+end
+-- The line after targeting: empty puts the default back. Returns nil and why when it can't be used.
+function P.setAction(text)
+    if not db then return end
+    text = trim(text or "")
+    if text == "" then text = ns.defaults.ping.action end
+    if text:sub(1, 1) ~= "/" then return nil, "The action line must start with /." end
+    db.action = text
+    changed()
+    return true
+end
+function P.companionsOn() local s = SM.db(); return s and not s.pingCompanionsOff or false end
+function P.setCompanions(v)
+    local s = SM.db()
+    if s then s.pingCompanionsOff = not v or nil end
+    if v then changed() else refreshPreview() end
+end
 local setCustom
-ns.EditBox(panel, "Custom target",
-    "The mob " .. CUSTOM .. " targets. For a quest's mobs, type /ku in chat and shift-click the quest.",
-    function() return db and db.custom end,
-    function(text)
-        text = trim(text)
-        if text ~= "" and text ~= db.custom then setCustom(text) end
-    end)
-
-ns.Checkbox(panel, "Alt-click quests",
-    "Alt-click a quest in the quest log, or in Questie's tracker, to make " .. CUSTOM .. " target its mobs.",
-    function() return db and db.questClick end, function(v) db.questClick = v end)
-
-ns.Header(panel, "Preview of " .. CUSTOM)
-preview = ns.GrowingText(panel) -- one line per macro line; the Nearby alert section follows it
-tinsert(panel.refreshers, refreshPreview)
+-- What it targets: a mob's name, or a quest link
+function P.setCustom(text)
+    text = trim(text or "")
+    if db and text ~= "" and text ~= db.custom then setCustom(text) end
+end
 
 -- Custom target ------------------------------------------------------------------------------
 
@@ -249,7 +316,7 @@ end
 
 -- A companion addon's names become the target, shown as label (e.g. "vendors of Woolen Cape").
 function ns.setCustomNames(label, names)
-    if not ns.IsOn("ping") then return end
+    if not pingOn() then return end
     db.custom, db.customQuest, db.customNames = label, nil, names
     updateCustom()
     say("%s pings %s%s: %s", CUSTOM, label, InCombatLockdown() and " (after combat)" or "", table.concat(names, ", "))
@@ -260,7 +327,7 @@ end
 -- C_QuestLog.SetSelectedQuest (modern) or SelectQuestLogEntry (classic); with Alt held, that sets the target.
 local lastPick, lastPickTime
 local function onQuestSelected(id, title)
-    if not (db and db.questClick and ns.IsOn("ping") and id and id > 0 and IsAltKeyDown()) then return end
+    if not (db and db.questClick and pingOn() and id and id > 0 and IsAltKeyDown()) then return end
     if id == lastPick and GetTime() - lastPickTime < 1 then return end -- one click can select twice
     lastPick, lastPickTime = id, GetTime()
     title = title or (C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(id))
@@ -281,26 +348,37 @@ if SelectQuestLogEntry then
     end)
 end
 
+-- While KU Ping is unticked its commands only say so
+local function whenTicked(fn)
+    return function(...)
+        if pingOn() then return fn(...) end
+        say("KU Ping is off; tick it in the Smart macros tab of /ku macro.")
+    end
+end
 -- /ku <quest link> works without "ping"; other links (items, spells) aren't targets
-ns.linkHandler = ns.whenOn("ping", function(text)
+ns.linkHandler = ns.whenOn("macros", whenTicked(function(text)
     if not text:find("|Hquest:%d+") then return say("only quest links can be targets; try /ku ping <mob name>") end
     setCustom(text)
-end)
-ns.AddCommand("ping", "/ku ping <name or quest link> (or just /ku <quest link>) - what " .. CUSTOM .. " targets", function(rest)
+end))
+ns.AddCommand("ping", "/ku ping <name or quest link> (or just /ku <quest link>) - what " .. CUSTOM .. " targets", whenTicked(function(rest)
     rest = trim(rest)
     if rest == "" then
         say("/ku ping <name or quest link>; %s targets %s.", CUSTOM, db.custom or "nothing yet")
     else
         setCustom(rest)
     end
-end, "ping")
+end), "macros")
 
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:RegisterEvent("QUEST_LOG_UPDATE")
+tinsert(SM.onReady, function()
+    if db then migrate() end
+    scheduleCustom()
+end)
 f:SetScript("OnEvent", function()
     -- combat may end before the timer: the macro then catches up as it ends
-    if InCombatLockdown() and db and ns.IsOn("ping") then ns.CombatQueue.Defer("ping", updateCustom) end
+    if InCombatLockdown() and db and pingOn() then ns.CombatQueue.Defer("ping", updateCustom) end
     scheduleCustom()
 end)

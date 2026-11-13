@@ -149,7 +149,7 @@ end
 
 function M.scanBags()
     local items = {}
-    for bag = 0, NUM_BAG_SLOTS or 4 do
+    for bag = 0, (NUM_BAG_SLOTS or 4) + (NUM_REAGENTBAG_SLOTS or 0) do -- the reagent bag (5) too
         for slot = 1, C.GetContainerNumSlots(bag) or 0 do
             local it = M.readSlot(bag, slot)
             if it then items[#items + 1] = it end
@@ -252,7 +252,7 @@ M.plural = plural
 
 local run -- {mails = {{to =, items =}}, i =, perClick =, clicked =, out = the mail sent, wait = its timer, sent, order, notes}
 local mailOpen = false
-local sendButton, previewButton
+local sendButton
 
 local function debugCheck(name, value)
     if ns.debug then ns.debug.run({{name, function() return value end}}) end
@@ -277,7 +277,6 @@ function M.refreshButton()
     if not sendButton then return end
     local shown = mailOpen and ns.IsOn("mail")
     sendButton:SetShown(shown)
-    previewButton:SetShown(shown)
     if not shown then return end
     local text, enabled
     if run and run.perClick then
@@ -289,6 +288,7 @@ function M.refreshButton()
         text, enabled = n > 0 and fmt("Send by rules (%s)", plural(n, "item", "items")) or "Nothing to send", n > 0
     end
     sendButton:SetText(text)
+    sendButton:SetWidth(math.max(120, (sendButton:GetTextWidth() or 0) + 28)) -- as wide as its text, no wider
     sendButton:SetEnabled(enabled)
 end
 local function changed()
@@ -418,14 +418,26 @@ end
 local function makeButtons()
     if sendButton or not MailFrame then return end
     sendButton = CreateFrame("Button", "KureqUtilsMailSendButton", MailFrame, "UIPanelButtonTemplate")
-    sendButton:SetSize(200, 22)
-    sendButton:SetPoint("LEFT", MailFrameTab2 or MailFrame, "RIGHT", 8, 0) -- beside the send tab
-    sendButton:SetScript("OnClick", onClick)
-    previewButton = CreateFrame("Button", "KureqUtilsMailPreviewButton", MailFrame, "UIPanelButtonTemplate")
-    previewButton:SetSize(80, 22)
-    previewButton:SetPoint("LEFT", sendButton, "RIGHT", 4, 0)
-    previewButton:SetText("Preview")
-    previewButton:SetScript("OnClick", function() if M.showPreview then M.showPreview() end end)
+    sendButton:SetHeight(22)
+    -- in the row of the mail tabs, its right edge at the frame's, so it never hangs past the frame
+    sendButton:SetPoint("RIGHT", MailFrame, "RIGHT", -4, 0)
+    sendButton:SetPoint("TOP", MailFrameTab2 or MailFrame, "TOP", 0, -6)
+    sendButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    sendButton:SetScript("OnClick", function(_, mouse)
+        if mouse == "RightButton" then
+            if M.showPreview then M.showPreview() end
+        else
+            onClick()
+        end
+    end)
+    sendButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Mail rules", 1, 1, 1)
+        GameTooltip:AddLine("Click to send what your rules match. Right-click to see what goes to whom.", nil, nil, nil,
+            true)
+        GameTooltip:Show()
+    end)
+    sendButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
 local events = CreateFrame("Frame")

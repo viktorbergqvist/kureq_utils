@@ -15,6 +15,7 @@ local MAIN_Y = -(PAD + TOP_H + GAP + TILE_H + GAP)
 local LIST_W, ROW_H = 300, 34
 local CONTENT_W = BW - 2 * PAD - LIST_W - GAP - 12 - 30
 local ICON, BAR_H, LINE_H, SUMMARY_H = 22, 24, 20, 22
+local SETTING_H = 32 -- a Settings line holds a tick or a text box (29 and 22 high), the settings page's
 
 local frame, body = St.Window("KureqLoadoutsFrame", "Loadouts", W, H)
 local selected -- the loadout shown on the right: a saved one's id, or a backup (its table)
@@ -42,22 +43,7 @@ local function chosen()
     return selected and L.list()[selected], false
 end
 
-local function Button(parent, text, w)
-    local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    b:SetSize(w, 22)
-    b:SetText(text)
-    return b
-end
-
--- A grey prompt in an empty InputBoxTemplate box
-local function Prompt(box, text)
-    local prompt = Text(box, "GameFontDisable")
-    prompt:SetPoint("LEFT", 2, 0)
-    prompt:SetText(text)
-    box:SetScript("OnEditFocusGained", function() prompt:Hide() end)
-    box:SetScript("OnEditFocusLost", function(self) prompt:SetShown((self:GetText() or "") == "") end)
-    return prompt
-end
+local Button, Prompt = L.Button, L.Prompt -- MacroForm.lua
 
 -- Top bar: search, Import, and a name box that saves what you have now ---------------------------------------------
 
@@ -70,10 +56,9 @@ frame.search = search
 
 local saveButton = Button(body, "Save current", 120)
 saveButton:SetPoint("TOPRIGHT", -PAD, -PAD - 3)
-local nameBox = CreateFrame("EditBox", nil, body, "InputBoxTemplate")
+local nameBox = St.EditBox(body)
 nameBox:SetPoint("RIGHT", saveButton, "LEFT", -10, 0)
-nameBox:SetSize(200, 20)
-nameBox:SetAutoFocus(false)
+nameBox:SetWidth(200)
 nameBox:SetMaxLetters(40)
 local namePrompt = Prompt(nameBox, "Loadout name")
 local importButton = Button(body, "Import", 90)
@@ -99,12 +84,8 @@ frame.nameBox, frame.saveButton, frame.importButton = nameBox, saveButton, impor
 
 local TILES = {"Loadouts", "This character", "Waiting to place"}
 local tiles = {}
-local tileW = math.floor((BW - 2 * PAD - (#TILES - 1) * GAP) / #TILES)
 for i, label in ipairs(TILES) do
     local t = Pane(body)
-    t:SetPoint("TOPLEFT", PAD + (i - 1) * (tileW + GAP), -(PAD + TOP_H + GAP))
-    -- the last one takes what rounding left, so the row ends where the panes below do
-    t:SetSize(i < #TILES and tileW or BW - 2 * PAD - (#TILES - 1) * (tileW + GAP), TILE_H)
     t.label = Text(t, "GameFontNormalSmall")
     t.label:SetPoint("TOPLEFT", 10, -8)
     t.label:SetText(label)
@@ -152,15 +133,11 @@ frame.backupTitle = backupTitle
 local function shownLoadouts() -- newest first, under the search
     local query = (search:GetText() or ""):lower()
     local shown = {}
-    for id, lo in pairs(L.list()) do
+    for _, item in ipairs(L.sorted()) do
+        local lo = item.lo
         local found = query == "" or lo.name:lower():find(query, 1, true) or (lo.className or ""):lower():find(query, 1, true)
-        if found then shown[#shown + 1] = {id = id, lo = lo} end
+        if found then shown[#shown + 1] = item end
     end
-    table.sort(shown, function(a, b)
-        local ta, tb = a.lo.updated or a.lo.created, b.lo.updated or b.lo.created
-        if ta ~= tb then return ta > tb end
-        return a.id > b.id
-    end)
     return shown
 end
 
@@ -178,10 +155,9 @@ emptyText:SetJustifyH("CENTER")
 emptyText:SetText("No loadouts yet. Type a name above and click Save current to keep your bars, macros, bindings and "
     .. "settings, or click Import to add one someone shared.")
 
-local renameBox = CreateFrame("EditBox", nil, detail, "InputBoxTemplate") -- the name; edit it to rename
+local renameBox = St.EditBox(detail) -- the name; edit it to rename
 renameBox:SetPoint("TOPLEFT", 20, -12)
 renameBox:SetSize(260, 24)
-renameBox:SetAutoFocus(false)
 renameBox:SetMaxLetters(40)
 renameBox:SetFontObject("GameFontNormalLarge")
 local function rename()
@@ -200,7 +176,8 @@ from:SetPoint("TOPLEFT", 12, -42)
 from:SetPoint("RIGHT", -12, 0)
 frame.from = from
 
-local TABS = {{"bars", "Bars"}, {"macros", "Macros"}, {"bindings", "Bindings"}, {"cvars", "Settings"}}
+local TABS = {{"bars", "Bars"}, {"macros", "Macros"}, {"bindings", "Bindings"}, {"cvars", "Settings"},
+    {"rules", "Rules"}} -- "Rules": "Apply automatically" would run under the Macros tab's buttons
 local tabs = {}
 for i, t in ipairs(TABS) do
     local b = St.TextTab(detail, function()
@@ -217,7 +194,7 @@ tabLine:SetPoint("TOPRIGHT", -6, -83)
 
 local contentScroll = CreateFrame("ScrollFrame", nil, detail, "ScrollFrameTemplate")
 contentScroll:SetPoint("TOPLEFT", 12, -90)
-contentScroll:SetPoint("BOTTOMRIGHT", -30, 68)
+contentScroll:SetPoint("BOTTOMRIGHT", -30, 96)
 local content = CreateFrame("Frame", nil, contentScroll)
 content:SetSize(CONTENT_W, 1)
 contentScroll:SetScrollChild(content)
@@ -250,10 +227,21 @@ for _, bar in ipairs(BARS) do
         b.icon:SetPoint("TOPLEFT", 2, -2)
         b.icon:SetPoint("BOTTOMRIGHT", -2, 2)
         b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        b.cross = b:CreateTexture(nil, "OVERLAY") -- an ignored slot is crossed out
+        b.cross:SetPoint("TOPLEFT", 3, -3)
+        b.cross:SetPoint("BOTTOMRIGHT", -3, 3)
+        -- the ready check's red cross: an atlas on Forever, a file on Classic Era
+        if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("UI-LFG-DeclineMark") then
+            b.cross:SetAtlas("UI-LFG-DeclineMark")
+        else
+            b.cross:SetTexture("Interface\\RaidFrame\\ReadyCheck-NotReady")
+        end
+        b.cross:Hide()
         b.slot = slot
         b:SetScript("OnEnter", function(self)
-            if not (self.what or self.changed or self.editable) then return end
+            if not (self.what or self.changed or self.editable or self.ignored) then return end
             local lines = {("%s, slot %d"):format(bar[2], i)}
+            if self.ignored then lines[#lines + 1] = "Ignored: loading leaves this slot as it is." end
             if self.waiting then lines[#lines + 1] = "You don't know it yet: it goes on when you learn it." end
             if self.changed then lines[#lines + 1] = self.what and "Loading puts it on your bar." or "Loading empties this slot." end
             if self.editable then -- LoadoutsEditor.lua
@@ -271,6 +259,7 @@ frame.icons = icons
 -- Macros, Bindings and Settings: lines of an optional icon, a gold label and a white value; data is what the line
 -- shows (a macro's index, {command, key}, a setting's name), for the editor
 local lines = {}
+local lineH = LINE_H -- the shown tab's line height: taller on Settings
 local function setLine(i, icon, label, value, data)
     local r = lines[i]
     if not r then
@@ -279,8 +268,7 @@ local function setLine(i, icon, label, value, data)
         local hl = r:CreateTexture(nil, "HIGHLIGHT")
         hl:SetAllPoints()
         hl:SetColorTexture(1, 1, 1, 0.08)
-        r:SetSize(CONTENT_W, LINE_H)
-        r:SetPoint("TOPLEFT", 0, -(SUMMARY_H + (i - 1) * LINE_H))
+        r:SetWidth(CONTENT_W) -- set again on resizing
         r.icon = r:CreateTexture(nil, "ARTWORK")
         r.icon:SetSize(18, 18)
         r.icon:SetPoint("LEFT")
@@ -290,6 +278,8 @@ local function setLine(i, icon, label, value, data)
         r.value:SetPoint("RIGHT")
         lines[i] = r
     end
+    r:SetHeight(lineH)
+    r:SetPoint("TOPLEFT", 0, -(SUMMARY_H + (i - 1) * lineH))
     r.icon:SetShown(icon ~= nil)
     if icon then r.icon:SetTexture(icon) end
     r.label:ClearAllPoints()
@@ -308,18 +298,39 @@ status:SetPoint("RIGHT", -12, 0)
 status:SetWordWrap(true) -- a load's report takes two lines
 frame.status = status
 
-local loadButton = Button(detail, "Load", 110)
+-- Ticks on a saved loadout, over the status line
+local function Tick(label, tip, x, onClick)
+    local box = St.Checkbox(detail)
+    box:SetPoint("BOTTOMLEFT", x, 66)
+    box.Text:SetText(label)
+    box.Text:SetFontObject("GameFontHighlightSmall")
+    box:SetScript("OnClick", function(self)
+        flush()
+        local lo, isBackup = chosen()
+        if lo and not isBackup then onClick(lo, self:GetChecked() and true or false) end
+        refresh()
+    end)
+    box:SetScript("OnEnter", function(self) St.Tooltip(self, label, {tip}) end)
+    box:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    return box
+end
+local anyClassBox = Tick("Any class", "Loads on any class without a warning. Spells your class doesn't know wait "
+    .. "until you learn them, and ones it can't use are left out.", 8, function(lo, on) L.setAnyClass(lo, on) end)
+frame.anyClassBox = anyClassBox
+
+local loadButton = Button(detail, "Load", 80)
 loadButton:SetPoint("BOTTOMLEFT", 12, 12)
-local updateButton = Button(detail, "Update from current", 150)
+local updateButton = Button(detail, "Update from current", 140)
 updateButton:SetPoint("LEFT", loadButton, "RIGHT", 8, 0)
-local exportButton = Button(detail, "Export", 90)
+local exportButton = Button(detail, "Export", 80)
 exportButton:SetPoint("LEFT", updateButton, "RIGHT", 8, 0)
-local deleteButton = Button(detail, "Delete", 90)
+local deleteButton = Button(detail, "Delete", 80)
 deleteButton:SetPoint("BOTTOMRIGHT", -12, 12)
 local restoreButton = Button(detail, "Restore", 110)
 restoreButton:SetPoint("BOTTOMLEFT", 12, 12)
+local cloneButton = Button(detail, "Clone", 80) -- beside Export, or Restore for a backup
 frame.loadButton, frame.updateButton, frame.deleteButton = loadButton, updateButton, deleteButton
-frame.exportButton, frame.restoreButton = exportButton, restoreButton
+frame.exportButton, frame.restoreButton, frame.cloneButton = exportButton, restoreButton, cloneButton
 
 local function report(r, parts, done)
     local out = {}
@@ -341,39 +352,17 @@ end
 
 -- Dialogs over the window: what each acts on is kept in a local, never read back from the list ---------------------
 
-local function Dialog(w, h)
-    local d = Pane(frame)
-    d:SetFrameStrata("DIALOG")
-    d:SetToplevel(true)
-    d:EnableMouse(true) -- clicks don't fall through to the window
-    d:SetSize(w, h)
-    d:SetPoint("CENTER", frame, "CENTER")
-    d:Hide()
-    d.title = Text(d, "GameFontNormalLarge")
-    d.title:SetPoint("TOPLEFT", 12, -12)
-    d.title:SetPoint("RIGHT", -12, 0)
-    d.text = Text(d, "GameFontDisableSmall")
-    d.text:SetPoint("TOPLEFT", 12, -36)
-    d.text:SetPoint("RIGHT", -12, 0)
-    d.text:SetWordWrap(true)
-    d.cancel = Button(d, "Cancel", 90)
-    d.cancel:SetPoint("BOTTOMRIGHT", -12, 12)
-    d.cancel:SetScript("OnClick", function() d:Hide() end)
-    d.ok = Button(d, "OK", 90)
-    d.ok:SetPoint("RIGHT", d.cancel, "LEFT", -8, 0)
-    return d
-end
+local function Dialog(w, h) return L.Dialog(frame, w, h) end
 
 -- Load: which parts, all ticked
-local loadDialog = Dialog(330, 220)
+local loadDialog = Dialog(330, 244)
 loadDialog.ok:SetText("Load")
 local loading -- the loadout the load dialog is open for
 local PARTS = {{"actions", "Action bars"}, {"macros", "Macros"}, {"bindings", "Key bindings"}, {"cvars", "Interface settings"}}
 local boxes = {}
 for i, p in ipairs(PARTS) do
-    local box = CreateFrame("CheckButton", nil, loadDialog, "UICheckButtonTemplate")
-    box:SetSize(24, 24)
-    box:SetPoint("TOPLEFT", 8, -68 - (i - 1) * 26)
+    local box = St.Checkbox(loadDialog)
+    box:SetPoint("TOPLEFT", 8, -68 - (i - 1) * 32) -- 32 apart: the ticks are 29 high
     box.Text:SetText(p[2])
     box.Text:SetFontObject("GameFontHighlight")
     box:SetScript("OnClick", function()
@@ -417,10 +406,9 @@ shareBox:SetScript("OnTextChanged", function(self, userInput)
         self:HighlightText()
     end
 end)
-local shareName = CreateFrame("EditBox", nil, share, "InputBoxTemplate")
+local shareName = St.EditBox(share)
 shareName:SetPoint("BOTTOMLEFT", 18, 13)
-shareName:SetSize(200, 20)
-shareName:SetAutoFocus(false)
+shareName:SetWidth(200)
 shareName:SetMaxLetters(40)
 local shareNamePrompt = Prompt(shareName, "Name (or keep the shared one)")
 local shareError = Text(share, "GameFontNormalSmall")
@@ -510,6 +498,14 @@ updateButton:SetScript("OnClick", function()
         refresh()
     end)
 end)
+cloneButton:SetScript("OnClick", function()
+    flush()
+    local lo = chosen()
+    if not (lo and ns.IsOn("loadouts")) then return end
+    selected = L.clone(lo)
+    status:SetText(("Made %s, a copy of %s."):format(L.list()[selected].name, lo.name))
+    refresh()
+end)
 deleteButton:SetScript("OnClick", function()
     flush()
     local lo, isBackup = chosen()
@@ -566,16 +562,23 @@ local function showBars(lo, editable)
                 end
                 b.icon:SetShown(a ~= nil)
                 b.changed, b.waiting, b.editable = p.changed[slot], p.waiting[slot], editable
+                b.ignored = lo.ignored and lo.ignored[slot] or nil
                 b:SetBackdropBorderColor(GOLD[1], GOLD[2], GOLD[3], b.changed and 1 or 0)
-                b.icon:SetDesaturated(b.waiting == true) -- a spell you don't know yet: it would wait
-                b.icon:SetAlpha(b.waiting and 0.45 or 1)
+                -- a spell you don't know yet would wait; an ignored slot isn't loaded
+                b.icon:SetDesaturated(b.waiting == true or b.ignored == true)
+                b.icon:SetAlpha((b.waiting or b.ignored) and 0.45 or 1)
+                b.cross:SetShown(b.ignored == true)
             end
         end
     end
     local text = not next(lo.actions) and "No action bars saved." or ("%s, %s. Gold edges change your bars; dim spells wait."):format(
         count(p.changes, "slot changes", "slots change"), count(p.waits, "spell waits until learned", "spells wait until learned"))
+    if p.ignores > 0 then
+        text = text .. (" %s: loading leaves %s."):format(count(p.ignores, "slot is crossed out", "slots are crossed out"),
+            p.ignores == 1 and "it" or "them")
+    end
     local _, class = UnitClass("player")
-    if lo.class and class and lo.class ~= class then
+    if lo.class and class and lo.class ~= class and not lo.anyClass then
         text = text .. (" |cffff8040Saved on a %s: its spells won't match yours.|r"):format(lo.className or lo.class)
     end
     summary:SetText(text)
@@ -589,6 +592,7 @@ local function bindingName(command)
 end
 local function showLines(lo)
     local n = 0
+    lineH = tab == "cvars" and SETTING_H or LINE_H
     local function add(...) n = n + 1; setLine(n, ...) end
     if tab == "macros" then
         for i, m in ipairs(lo.macros) do
@@ -614,26 +618,35 @@ local function showLines(lo)
             .. " changed from the defaults (Game and Combat settings).")
     end
     for i = n + 1, #lines do lines[i]:Hide() end
-    return n * LINE_H
+    return n * lineH
 end
 
 local DETAIL_PARTS = {renameBox, from, contentScroll, tabLine, status}
+local TICKS = {anyClassBox}
 local function refreshDetail()
     local lo, isBackup = chosen()
     for _, part in ipairs(DETAIL_PARTS) do part:SetShown(lo ~= nil) end
     for _, b in pairs(tabs) do b:SetShown(lo ~= nil) end
     for _, b in ipairs({loadButton, updateButton, exportButton, deleteButton}) do b:SetShown(lo ~= nil and not isBackup) end
+    for _, b in ipairs(TICKS) do b:SetShown(lo ~= nil and not isBackup) end
     restoreButton:SetShown(isBackup == true)
+    cloneButton:SetShown(lo ~= nil)
+    cloneButton:ClearAllPoints()
+    cloneButton:SetPoint("LEFT", isBackup and restoreButton or exportButton, "RIGHT", 8, 0)
     emptyText:SetShown(lo == nil)
     if not lo then return L.ui.decorate and L.ui.decorate(tab, nil, true, 0) end
     if not renameBox:HasFocus() then renameBox:SetText(lo.name) end
+    anyClassBox:SetChecked(lo.anyClass == true)
     from:SetText(("%s%s|r · %s %s, %s"):format(classColor(lo.class), lo.className or "?",
         isBackup and "backup of" or "saved from", lo.from or "?", stamp(lo.updated or lo.created)))
     for _, t in ipairs(TABS) do tabs[t[1]]:Set(t[2], tab == t[1]) end
     local height
-    if tab == "bars" then
-        height = showBars(lo, not isBackup)
+    if tab == "bars" or tab == "rules" then
         for _, r in ipairs(lines) do r:Hide() end
+        if tab == "bars" then height = showBars(lo, not isBackup) else
+            for _, row in pairs(barRows) do row:Hide() end
+            height = 0 -- LoadoutsRules.lua draws it
+        end
     else
         for _, row in pairs(barRows) do row:Hide() end
         height = showLines(lo)
@@ -661,10 +674,24 @@ local function refreshTiles()
     end
 end
 
-local function pick(self)
+-- a click chooses the row; a right-click also opens its menu: Clone, and Delete for a saved loadout
+local function pick(self, button)
     selected = self.backup or self.id
     status:SetText("")
     refresh()
+    if button ~= "RightButton" or not ns.IsOn("loadouts") then return end
+    local isBackup = self.backup ~= nil
+    MenuUtil.CreateContextMenu(self, function(_, root)
+        root:CreateButton("Clone", function() cloneButton:GetScript("OnClick")(cloneButton) end)
+        if not isBackup then
+            root:CreateButton("Delete", function() deleteButton:GetScript("OnClick")(deleteButton) end)
+        end
+    end)
+end
+local function Row(i)
+    local b = St.ListRow(list, i, LIST_W - 32, ROW_H, pick)
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    return b
 end
 
 function refresh()
@@ -672,13 +699,13 @@ function refresh()
     local shown, backups = shownLoadouts(), L.backups()
     if not chosen() then selected = shown[1] and shown[1].id or backups[1] end
     for i, item in ipairs(shown) do
-        local b = rows[i] or St.ListRow(list, i, LIST_W - 32, ROW_H, pick)
+        local b = rows[i] or Row(i)
         rows[i] = b
         local lo = item.lo
         b.id, b.name = item.id, lo.name
         b.nameText:SetText(classColor(lo.class) .. lo.name .. "|r")
-        b.count:SetText(lo.className or "")
-        b.sub:SetText("from " .. (lo.from or "?"))
+        b.count:SetText(lo.anyClass and "Any class" or lo.className or "")
+        b.sub:SetText("from " .. (lo.from or "?") .. (L.hasRules(lo) and " · applies by itself" or ""))
         b.each:SetText(date("%d %b", lo.updated or lo.created))
         b:SetPicked(item.id == selected)
         b:Show()
@@ -691,7 +718,7 @@ function refresh()
     backupLine:SetPoint("TOPLEFT", 0, -(y + 28))
     backupLine:SetPoint("TOPRIGHT", 0, -(y + 28))
     for i, lo in ipairs(backups) do
-        local b = backupRows[i] or St.ListRow(list, i, LIST_W - 32, ROW_H, pick)
+        local b = backupRows[i] or Row(i)
         backupRows[i] = b
         b:ClearAllPoints()
         b:SetPoint("TOPLEFT", 0, -(y + 30 + (i - 1) * ROW_H))
@@ -711,10 +738,28 @@ end
 frame:SetScript("OnShow", refresh)
 L.changed = refresh
 
--- What the editor (LoadoutsEditor.lua) builds on
+-- What the editor (LoadoutsEditor.lua) builds on; a part as wide as the content adds fn(width) to resized
 L.ui = {frame = frame, detail = detail, content = content, summary = summary, status = status, lines = lines,
     CONTENT_W = CONTENT_W, SUMMARY_H = SUMMARY_H, LINE_H = LINE_H, Button = Button, Prompt = Prompt, Dialog = Dialog,
-    chosen = chosen, bindingName = bindingName, refresh = function() refresh() end}
+    chosen = chosen, bindingName = bindingName, refresh = function() refresh() end, resized = {}}
+
+-- Resizing: the list and the detail stretch on their anchors; this re-lays the tiles and what is as wide as the
+-- detail's content (its summary, lines and rules; the bars, the macro form and the ready-made cards keep their size)
+St.Resizable(frame, function(w)
+    local BW = St.bodySize(w, H)
+    local tileW = math.floor((BW - 2 * PAD - (#TILES - 1) * GAP) / #TILES)
+    for i, t in ipairs(tiles) do
+        t:SetPoint("TOPLEFT", PAD + (i - 1) * (tileW + GAP), -(PAD + TOP_H + GAP))
+        -- the last one takes what rounding left, so the row ends where the panes below do
+        t:SetSize(i < #TILES and tileW or BW - 2 * PAD - (#TILES - 1) * (tileW + GAP), TILE_H)
+    end
+    CONTENT_W = BW - 2 * PAD - LIST_W - GAP - 12 - 30
+    content:SetWidth(CONTENT_W)
+    summary:SetWidth(CONTENT_W)
+    for _, r in ipairs(lines) do r:SetWidth(CONTENT_W) end
+    for _, fn in ipairs(L.ui.resized) do fn(CONTENT_W) end
+    if frame:IsShown() then refresh() end -- the summary may wrap onto another line
+end)
 
 function L.toggle()
     if frame:IsShown() then frame:Hide() else frame:Show() end

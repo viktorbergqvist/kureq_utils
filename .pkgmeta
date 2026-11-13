@@ -6,4 +6,4 @@ manual-changelog:
 
 ignore:
   - .github
-  - media
+  - media/screenshots

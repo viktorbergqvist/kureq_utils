@@ -379,6 +379,7 @@ local function myKey()
     local realm = GetRealmName()
     return name .. " - " .. realm, name, realm
 end
+S.myKey = myKey
 
 tinsert(ns.onLoad, function(root)
     root.killStats = type(root.killStats) == "table" and root.killStats or {}

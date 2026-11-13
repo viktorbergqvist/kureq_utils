@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.8 (2026-11-13)
+
+### Macros
+
+- New: /ku macro, a window for your General and Character macros with search, history and import.
+- A code editor with colours, problem underlines with fixes, suggestions as you type, undo and shell keys.
+- Ready-made macros for your class and for Kureq Utils' own commands.
+- Smart macros that keep themselves up to date: potion, mana, drink, food, bandage, hearth, mount and pet.
+- KU Mount uses Ghost Wolf, Travel or Cat Form, or Aspect of the Cheetah where you can't mount.
+- The Ping macro is now KU Ping, a smart macro; your settings carry over.
+- Optional: open this window instead of the game's macros.
+
+### Loadouts
+
+- Any class, and ignored action bar slots, for one loadout that suits all your characters.
+- Rules load a loadout by themselves: new characters, every login, a level or a learned spell.
+- Clone a loadout or a backup.
+
+### Delete items
+
+- Optional: look in the reagent bag.
+- Class bags: keep at most N Soul Shards, delete old ammo, keep at most N ammo stacks, look in special bags.
+
+### Mail rules
+
+- Items in the reagent bag are sent too.
+- The mailbox button stays inside the mail frame; right-click it for the preview.
+
+### General
+
+- Windows can be resized from their bottom-right corner.
+- Windows use the settings page's checkboxes, dropdowns and text boxes.
+- The minimap menu shows an icon beside each window.
+
 ## v1.7.2 (2026-11-13)
 
 ### Delete items

@@ -34,6 +34,7 @@ local frame, body = St.Window("KureqStatsFrame", "Kill Stats", W, H) -- the fram
 
 local page = "mobs" -- or "graphs"
 local refresh
+local relaying -- set while a resize draws again: the data (V) and the fixed-size maps stay as they are
 local V -- the data shown: S.view(), set at each refresh
 
 -- Page tabs under the window; the top bar holds the character, zone and Solo / Group filters
@@ -48,7 +49,7 @@ frame.tableButton, frame.graphsButton, frame.mapButton, frame.deathsButton = pla
 local GROUPS = {{"Solo and group kills", "all"}, {"Solo kills", "solo"}, {"Group kills", "group"}}
 local function isGroup(f) return f == ns.db.stats.filter end
 local function setGroup(f) ns.db.stats.filter = f; refresh() end
-local groupMenu = St.MenuButton(body, 150, function()
+local groupMenu = St.Dropdown(body, 150, function()
     for _, g in ipairs(GROUPS) do if isGroup(g[2]) then return g[1] end end
 end, function(root)
     for _, g in ipairs(GROUPS) do root:CreateRadio(g[1], isGroup, setGroup, g[2]) end
@@ -114,7 +115,7 @@ local function fillZones(root)
     end
     if unknown > 0 then root:CreateRadio(label("Unknown zone", unknown), isZone, setZone, -1) end
 end
-local zoneMenu = St.MenuButton(body, 150, function()
+local zoneMenu = St.Dropdown(body, 150, function()
     local map = ns.db.stats.zone
     return map == 0 and "All zones" or map == -1 and "Unknown zone" or mapName(map)
 end, fillZones)
@@ -130,7 +131,7 @@ local function charText(key)
     local color = c and c.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[c.class]
     return color and color.colorStr and ("|c%s%s|r"):format(color.colorStr, key) or key
 end
-local charMenu = St.MenuButton(body, 150, function() return charText(ns.db.stats.char) end, function(root)
+local charMenu = St.Dropdown(body, 150, function() return charText(ns.db.stats.char) end, function(root)
     root:CreateRadio(charText("all"), isChar, setChar, "all")
     local keys = {}
     for key in pairs(ns.db.killStats) do keys[#keys + 1] = key end
@@ -149,12 +150,8 @@ frame.search = search
 -- Stat tiles: a gold label, the number, a grey line under it
 local TILES = {"Kills", "Experience", "Today", "Best hour", "Most killed"}
 local tiles = {}
-local tileW = math.floor((BW - 2 * PAD - (#TILES - 1) * GAP) / #TILES)
 for i, label in ipairs(TILES) do
     local t = Pane(body)
-    t:SetPoint("TOPLEFT", PAD + (i - 1) * (tileW + GAP), -(PAD + TOP_H + GAP))
-    -- the last one takes what rounding left, so the row ends where the panes below do
-    t:SetSize(i < #TILES and tileW or BW - 2 * PAD - (#TILES - 1) * (tileW + GAP), TILE_H)
     t.label = Text(t, "GameFontNormalSmall")
     t.label:SetPoint("TOPLEFT", 10, -8)
     t.label:SetText(label)
@@ -390,6 +387,10 @@ local function Breakdown(title, anchorX, width)
     local line = Line(overview)
     line:SetPoint("TOPLEFT", t.title, "BOTTOMLEFT", 0, -4)
     line:SetWidth(width)
+    function t:Resize(w)
+        line:SetWidth(w)
+        for _, r in ipairs(self.rows) do r:Resize(w) end
+    end
     for i = 1, BREAK_ROWS do
         local r = St.BarRow(overview, width, {0.25, 0.6, 1})
         r:SetPoint("TOPLEFT", line, "BOTTOMLEFT", 0, -4 - (i - 1) * 22)
@@ -429,6 +430,11 @@ local function LootList(title, x, width)
     local line = Line(lootView)
     line:SetPoint("TOPLEFT", l.title, "BOTTOMLEFT", 0, -4)
     line:SetWidth(width)
+    function l:Place(lx, w) -- at x in the loot view, w wide
+        self.title:SetPoint("TOPLEFT", lx, -124)
+        line:SetWidth(w)
+        for _, b in ipairs(self.rows) do b:SetWidth(w) end
+    end
     l.empty = Text(lootView, "GameFontDisable")
     l.empty:SetPoint("TOPLEFT", line, "BOTTOMLEFT", 0, -8)
     for i = 1, LOOT_ROWS do
@@ -629,6 +635,7 @@ local function refreshDetail()
     refreshLoot(mob, everyKill)
 
     refreshZoneTabs(mob)
+    if relaying then return end
     if name ~= frame.zoomedMob or shownMap ~= drawnMap then resetZoom() end -- a new mob or zone starts whole
     frame.zoomedMob = name
     drawMap(shownMap, mob and mob.spots or {})
@@ -640,13 +647,16 @@ local graphsView = CreateFrame("Frame", nil, body)
 graphsView:SetPoint("TOPLEFT", 0, MAIN_Y)
 graphsView:SetPoint("BOTTOMRIGHT")
 graphsView:Hide()
-local CHART_W = math.floor((BW - 2 * PAD - GAP) / 2)
-local CHART_H = math.floor((BH + MAIN_Y - PAD - GAP) / 2)
+-- the charts' size: a quarter of the page each, set by the window's size (layout below)
+local CHART_W, CHART_H
 
 local function ChartPane(title, col, row)
     local c = Pane(graphsView)
-    c:SetPoint("TOPLEFT", PAD + (col - 1) * (CHART_W + GAP), -(row - 1) * (CHART_H + GAP))
-    c:SetSize(CHART_W, CHART_H)
+    function c:Place(w, h)
+        self:SetPoint("TOPLEFT", PAD + (col - 1) * (w + GAP), -(row - 1) * (h + GAP))
+        self:SetSize(w, h)
+        if self.Fit then self:Fit(w, h) end
+    end
     c.title = Text(c, "GameFontNormal")
     c.title:SetPoint("TOPLEFT", 12, -12)
     c.title:SetText(title)
@@ -658,22 +668,31 @@ local function ChartPane(title, col, row)
     return c
 end
 
--- Horizontal bars: a breakdown row each (St.BarRow), the longest bar the largest
-local HBARS = 8
+-- Horizontal bars: a breakdown row each (St.BarRow), the longest bar the largest; as many as the pane is tall for
+-- (8 at the design size), c.n of them
 local function HBarChart(title, col, row, color)
     local c = ChartPane(title, col, row)
     c.bars = {}
-    for i = 1, HBARS do
-        c.bars[i] = St.BarRow(c, CHART_W - 24, color)
-        c.bars[i]:SetPoint("TOPLEFT", 12, -32 - (i - 1) * 21)
+    function c:Fit(w, h)
+        self.n = math.max(1, math.floor((h - 42) / 21))
+        for i = 1, math.max(self.n, #self.bars) do
+            local b = self.bars[i]
+            if not b and i <= self.n then
+                b = St.BarRow(self, w - 24, color)
+                b:SetPoint("TOPLEFT", 12, -32 - (i - 1) * 21)
+                b:Hide()
+                self.bars[i] = b
+            end
+            if i <= self.n then b:Resize(w - 24) else b:Hide() end
+        end
     end
     function c:Draw(items) -- {label, size, text}, in the order given
         local max = 0
-        for i = 1, math.min(#items, HBARS) do max = math.max(max, items[i].size) end
+        for i = 1, math.min(#items, self.n) do max = math.max(max, items[i].size) end
         self.empty:SetShown(#items == 0)
         for i, b in ipairs(self.bars) do
-            local item = items[i]
-            b:SetShown(item ~= nil)
+            local item = i <= self.n and items[i]
+            b:SetShown(item ~= nil and item ~= false)
             if item then b:Set(item.label, item.text, item.size / math.max(1, max)) end
         end
     end
@@ -687,26 +706,22 @@ local function ColumnChart(title, col, row, color)
     local plot = CreateFrame("Frame", nil, c)
     plot:SetPoint("TOPLEFT", 52, -40)
     plot:SetPoint("BOTTOMRIGHT", -14, 28)
-    local plotW, plotH = CHART_W - 66, CHART_H - 68
+    local plotW, plotH
     c.grid, c.gridLabels, c.cols = {}, {}, {}
     for i = 0, 3 do
         local line = plot:CreateTexture(nil, "BACKGROUND", nil, 1)
-        line:SetPoint("BOTTOMLEFT", 0, plotH * i / 3)
-        line:SetSize(plotW, 1)
+        line:SetHeight(1)
         line:SetColorTexture(1, 1, 1, i == 0 and 0.25 or 0.08)
         local label = Text(c, "GameFontDisableSmall")
         label:SetPoint("RIGHT", line, "LEFT", -6, 0)
         label:SetJustifyH("RIGHT")
         c.grid[i], c.gridLabels[i] = line, label
     end
-    local slot = plotW / COLUMNS
     for i = 1, COLUMNS do
         local b = CreateFrame("Button", nil, plot)
-        b:SetPoint("BOTTOMLEFT", (i - 1) * slot, 0)
-        b:SetSize(slot, plotH)
+        b.share = 0
         b.bar = b:CreateTexture(nil, "ARTWORK")
         b.bar:SetPoint("BOTTOM")
-        b.bar:SetWidth(math.min(30, slot - 8))
         St.Striped(b.bar, color, true)
         local hl = b:CreateTexture(nil, "HIGHLIGHT")
         hl:SetAllPoints()
@@ -717,6 +732,20 @@ local function ColumnChart(title, col, row, color)
         b:SetScript("OnEnter", function(self) Tooltip(self, self.item.tip, self.item.lines) end)
         b:SetScript("OnLeave", function() GameTooltip:Hide() end)
         c.cols[i] = b
+    end
+    function c:Fit(w, h) -- the plot's grid lines and columns at the pane's size
+        plotW, plotH = w - 66, h - 68
+        for i = 0, 3 do
+            self.grid[i]:SetPoint("BOTTOMLEFT", 0, plotH * i / 3)
+            self.grid[i]:SetWidth(plotW)
+        end
+        local slot = plotW / COLUMNS
+        for i, b in ipairs(self.cols) do
+            b:SetPoint("BOTTOMLEFT", (i - 1) * slot, 0)
+            b:SetSize(slot, plotH)
+            b.bar:SetWidth(math.min(30, slot - 8))
+            b.bar:SetHeight(math.max(1, plotH * b.share))
+        end
     end
     function c:Draw(items) -- {label, size, tip, lines}, oldest first
         local max = 0
@@ -733,7 +762,8 @@ local function ColumnChart(title, col, row, color)
             if item then
                 b.item = item
                 b.label:SetText(item.label)
-                b.bar:SetHeight(math.max(1, plotH * item.size / math.max(1, max)))
+                b.share = item.size / math.max(1, max)
+                b.bar:SetHeight(math.max(1, plotH * b.share))
             end
         end
     end
@@ -803,7 +833,7 @@ local function refreshGraphs()
             size = v.count, text = ("%s · %s xp each"):format(commas(v.count), commas(each(v.xp, v.count)))}
     end
     table.sort(items, function(a, b) return a.size > b.size end)
-    for i = HBARS + 1, #items do items[i] = nil end
+    for i = charts.diffs.n + 1, #items do items[i] = nil end
     local function order(d) return d == "?" and math.huge or d == "hidden" and 1e9 or d end
     table.sort(items, function(a, b) return order(a.d) < order(b.d) end)
     charts.diffs:Draw(items)
@@ -814,7 +844,8 @@ end
 -- Every kill on the map: the world and its continents show a bubble per zone with your kills there (bigger for
 -- more); click one (or a list entry, or the map) to zoom in. A zone shows every kill spot, colored by mob, with the
 -- mobs listed beside it. The character and Solo / Group filters apply; the zone filter doesn't (the map picks it).
-local BIG_W, BIG_H, SIDE_ROWS = 600, 400, 15
+local BIG_W, BIG_H = 600, 400
+local sideN = 15 -- the side list's rows: as many as the pane is tall for (layout below)
 local PALETTE = {{1, 0.3, 0.2}, {0.3, 0.6, 1}, {0.3, 0.85, 0.35}, {1, 0.82, 0}, {0.75, 0.4, 1}, {1, 0.55, 0.15},
     {0.3, 0.9, 0.9}, {1, 0.5, 0.75}}
 local OTHER = {0.7, 0.7, 0.7}
@@ -846,7 +877,7 @@ local sideLine = Line(side)
 sideLine:SetPoint("TOPLEFT", 8, -70)
 sideLine:SetPoint("TOPRIGHT", -8, -70)
 local sideRows = {}
-for i = 1, SIDE_ROWS do
+local function SideRow(i)
     local b = CreateFrame("Button", nil, side)
     b:SetPoint("TOPLEFT", 8, -74 - (i - 1) * 22)
     b:SetPoint("RIGHT", -8, 0)
@@ -864,11 +895,17 @@ for i = 1, SIDE_ROWS do
     b.count:SetPoint("RIGHT", -4, 0)
     b.count:SetJustifyH("RIGHT")
     b:SetScript("OnClick", function(self) if self.onClick then self.onClick() end end)
+    b:Hide()
     sideRows[i] = b
 end
 frame.sideRows = sideRows
 local sideMore = Text(side, "GameFontDisableSmall")
-sideMore:SetPoint("TOPLEFT", sideRows[SIDE_ROWS], "BOTTOMLEFT", 4, -4)
+local function fitSide(n)
+    sideN = n
+    for i = #sideRows + 1, n do SideRow(i) end
+    for i = n + 1, #sideRows do sideRows[i]:Hide() end
+    sideMore:SetPoint("TOPLEFT", side, "TOPLEFT", 12, -74 - n * 22 - 4)
+end
 
 local shownPlace -- the map shown; nil for the world
 local function worldMap() return C_Map.GetFallbackWorldMapID and C_Map.GetFallbackWorldMapID() or 947 end
@@ -948,8 +985,8 @@ local function refreshMapPage()
     end
     sideTitle:SetText(info and info.name or "World")
     for i, b in ipairs(sideRows) do
-        local item = items[i]
-        b:SetShown(item ~= nil)
+        local item = i <= sideN and items[i]
+        b:SetShown(item ~= nil and item ~= false)
         if item then
             b.swatch:SetColorTexture(item.color[1], item.color[2], item.color[3], 1)
             b.nameText:SetText(item.name)
@@ -957,7 +994,7 @@ local function refreshMapPage()
             b.onClick = item.onClick
         end
     end
-    sideMore:SetText(#items > SIDE_ROWS and ("and %d more"):format(#items - SIDE_ROWS)
+    sideMore:SetText(#items > sideN and ("and %d more"):format(#items - sideN)
         or #items == 0 and "No kills here yet." or "")
 
     -- the way back up: this map's parents, from the world down
@@ -989,7 +1026,7 @@ local function refreshMapPage()
         if child and child.mapID ~= map then goTo(child.mapID) end
     end
     big.onBack = path[#path - 1] and function() goTo(path[#path - 1].mapID) end or nil
-    big:Draw(map, marks, "No map art for this place")
+    if not relaying then big:Draw(map, marks, "No map art for this place") end
 end
 
 -- Deaths page ------------------------------------------------------------------------------------------------------
@@ -1190,9 +1227,11 @@ local function refreshDeaths()
         end
     end
     if d.x then marks[#marks + 1] = {x = d.x, y = d.y, size = 12, color = {1, 0.15, 0.1, 1}} end
-    if d.map ~= frame.deathMapShown then dMap:Reset() end
-    frame.deathMapShown = d.map
-    dMap:Draw(d.map, marks, d.map and "No map for this zone" or "Where isn't known (inside an instance?)")
+    if not relaying then
+        if d.map ~= frame.deathMapShown then dMap:Reset() end
+        frame.deathMapShown = d.map
+        dMap:Draw(d.map, marks, d.map and "No map for this zone" or "Where isn't known (inside an instance?)")
+    end
     -- who killed you most
     local by = {}
     for _, other in ipairs(list) do
@@ -1292,7 +1331,7 @@ end
 function refresh()
     if not frame:IsShown() then return end
     if not ns.db.killStats[ns.db.stats.char] then ns.db.stats.char = "all" end
-    V = S.view()
+    if not (relaying and V) then V = S.view() end
     for _, menu in ipairs({groupMenu, zoneMenu, charMenu}) do menu:Refresh() end
     for _, p in ipairs(plaques) do p:SetOn(p.page == page) end
     mobsView:SetShown(page == "mobs")
@@ -1319,6 +1358,35 @@ function refresh()
 end
 S.refresh = refresh
 frame:SetScript("OnShow", refresh)
+
+-- Resizing: the panes stretch on their anchors; this re-lays what is sized by the window (the tiles, the detail's
+-- columns and bars, the charts, the map page's list) and draws again
+St.Resizable(frame, function(w, h)
+    BW, BH = St.bodySize(w, h)
+    DETAIL_W = BW - 2 * PAD - LIST_W - GAP
+    local tileW = math.floor((BW - 2 * PAD - (#TILES - 1) * GAP) / #TILES)
+    for i, t in ipairs(tiles) do
+        t:SetPoint("TOPLEFT", PAD + (i - 1) * (tileW + GAP), -(PAD + TOP_H + GAP))
+        -- the last one takes what rounding left, so the row ends where the panes below do
+        t:SetSize(i < #TILES and tileW or BW - 2 * PAD - (#TILES - 1) * (tileW + GAP), TILE_H)
+    end
+    facts:SetColumnWidth(DETAIL_W - FACTS_X - 12)
+    dFacts:SetColumnWidth(DETAIL_W - FACTS_X - 12)
+    byGroup:Resize(DETAIL_W - MAP_W - 48)
+    lootFacts:SetColumnWidth(math.floor((DETAIL_W - 24 - 16) / 2))
+    drops:Place(12, DETAIL_W - 24 - 16 - SKINS_W)
+    skins:Place(DETAIL_W - 12 - SKINS_W, SKINS_W)
+    for _, r in ipairs(topRows) do r:Resize(DETAIL_W - 24) end
+    CHART_W = math.floor((BW - 2 * PAD - GAP) / 2)
+    CHART_H = math.floor((BH + MAIN_Y - PAD - GAP) / 2)
+    for _, c in pairs(charts) do c:Place(CHART_W, CHART_H) end
+    fitSide(math.max(1, math.floor((BH + MAIN_Y - PAD - 94) / 22)))
+    if V then -- drawn before: draw again at this size from the same data (refresh skips a hidden window)
+        relaying = true
+        refresh()
+        relaying = false
+    end
+end)
 
 function S.toggle() frame:SetShown(not frame:IsShown()) end
 ns.OnModuleChange("stats", function(on) if not on then frame:Hide() end end)

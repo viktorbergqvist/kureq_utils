@@ -39,7 +39,7 @@ RATINGS[#RATINGS + 1] = {"No rating", -1}
 RATINGS[#RATINGS + 1] = {"Blocked", "blocked"}
 local function isShownRating(v) return v == ratingFilter end
 local function showRating(v) ratingFilter = v; refresh() end
-local filterMenu = St.MenuButton(body, 150, function()
+local filterMenu = St.Dropdown(body, 150, function()
     for _, e in ipairs(RATINGS) do if isShownRating(e[2]) then return e[1] end end
 end, function(root)
     for _, e in ipairs(RATINGS) do root:CreateRadio(e[1], isShownRating, showRating, e[2]) end
@@ -51,7 +51,7 @@ frame.filterMenu = filterMenu
 local categoryFilter = 0 -- 0 any, -1 none, else a category id
 local function isCategory(v) return v == categoryFilter end
 local function setCategory(v) categoryFilter = v; refresh() end
-local categoryMenu = St.MenuButton(body, 150, function()
+local categoryMenu = St.Dropdown(body, 150, function()
     return categoryFilter == 0 and "All categories" or categoryFilter == -1 and "No category"
         or N.categoryText(categoryFilter)
 end, function(root)
@@ -67,7 +67,7 @@ local SOURCES = {{"All notes", "all"}, {"My notes", "mine"}, {"Guild notes", "gu
 local source = "all"
 local function isSource(v) return v == source end
 local function setSource(v) source = v; refresh() end
-local sourceMenu = St.MenuButton(body, 100, function()
+local sourceMenu = St.Dropdown(body, 100, function()
     for _, e in ipairs(SOURCES) do if isSource(e[2]) then return e[1] end end
 end, function(root)
     for _, e in ipairs(SOURCES) do root:CreateRadio(e[1], isSource, setSource, e[2]) end
@@ -79,10 +79,9 @@ local addButton = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
 addButton:SetPoint("TOPRIGHT", -PAD, -PAD - 3)
 addButton:SetSize(90, 22)
 addButton:SetText("Add note")
-local nameBox = CreateFrame("EditBox", nil, body, "InputBoxTemplate")
+local nameBox = St.EditBox(body)
 nameBox:SetPoint("RIGHT", addButton, "LEFT", -10, 0)
-nameBox:SetSize(140, 20)
-nameBox:SetAutoFocus(false)
+nameBox:SetWidth(140)
 local namePrompt = Text(nameBox, "GameFontDisable")
 namePrompt:SetPoint("LEFT", 2, 0)
 namePrompt:SetText("Character name")
@@ -105,12 +104,8 @@ frame.nameBox, frame.addButton = nameBox, addButton
 
 local TILES = {"Characters", "Liked", "Avoid", "Last noted"}
 local tiles = {}
-local tileW = math.floor((BW - 2 * PAD - (#TILES - 1) * GAP) / #TILES)
 for i, label in ipairs(TILES) do
     local t = Pane(body)
-    t:SetPoint("TOPLEFT", PAD + (i - 1) * (tileW + GAP), -(PAD + TOP_H + GAP))
-    -- the last one takes what rounding left, so the row ends where the panes below do
-    t:SetSize(i < #TILES and tileW or BW - 2 * PAD - (#TILES - 1) * (tileW + GAP), TILE_H)
     t.label = Text(t, "GameFontNormalSmall")
     t.label:SetPoint("TOPLEFT", 10, -8)
     t.label:SetText(label)
@@ -379,10 +374,9 @@ local editing -- {id = category id or nil, color = {r, g, b}}
 local catEdit = CreateFrame("Frame", nil, cats)
 catEdit:SetSize(CAT_W, 24)
 catEdit:Hide()
-local catName = CreateFrame("EditBox", nil, catEdit, "InputBoxTemplate")
+local catName = St.EditBox(catEdit)
 catName:SetPoint("LEFT", 6, 0)
-catName:SetSize(170, 20)
-catName:SetAutoFocus(false)
+catName:SetWidth(170)
 catName:SetMaxLetters(30)
 local swatch = CreateFrame("Button", nil, catEdit)
 swatch:SetPoint("LEFT", catName, "RIGHT", 10, 0)
@@ -626,7 +620,6 @@ function layoutDungeons()
         local b = dungeonLines[i]
         if not b then
             b = CreateFrame("Button", nil, dungeonList)
-            b:SetSize(dungeonW, DUNGEON_ROW)
             local hl = b:CreateTexture(nil, "HIGHLIGHT")
             hl:SetAllPoints()
             hl:SetColorTexture(1, 1, 1, 0.08)
@@ -637,6 +630,7 @@ function layoutDungeons()
             b:SetScript("OnClick", function(self) dungeonMenu(self) end)
             dungeonLines[i] = b
         end
+        b:SetSize(dungeonW, DUNGEON_ROW)
         b:ClearAllPoints()
         b:SetPoint("TOPLEFT", ((i - 1) % 2) * (dungeonW + 6), -math.floor((i - 1) / 2) * DUNGEON_ROW)
         b.dungeon = d.name
@@ -681,8 +675,7 @@ noteEdit:SetScript("OnTextChanged", function(self, userInput)
     refresh()
 end)
 -- Private: kept out of the guild's notes (shown while sharing is on)
-local privateBox = CreateFrame("CheckButton", nil, editor, "UICheckButtonTemplate")
-privateBox:SetSize(24, 24)
+local privateBox = St.Checkbox(editor)
 privateBox:SetPoint("LEFT", noteHint, "RIGHT", 12, 0)
 privateBox.Text:SetText("Private")
 privateBox.Text:SetFontObject("GameFontHighlight")
@@ -740,8 +733,7 @@ local BLOCK_TIPS = {
 local blockBoxes, lastBlock = {}, nil
 for _, b in ipairs(N.BLOCKS) do
     local kind, label = b[1], b[2]
-    local box = CreateFrame("CheckButton", nil, editor, "UICheckButtonTemplate")
-    box:SetSize(24, 24)
+    local box = St.Checkbox(editor)
     if lastBlock then
         box:SetPoint("LEFT", lastBlock.Text, "RIGHT", 8, 0)
     else
@@ -941,6 +933,31 @@ N.toggle = ns.whenOn("notes", function()
     if frame:IsShown() then frame:Hide() else N.open() end
 end)
 N.frame = frame
+
+-- Resizing: the list and the editor stretch on their anchors; this re-lays the tiles and what is as wide as the
+-- editor (categories, dungeons, the note, the guild's notes), then lays the shown note out again
+St.Resizable(frame, function(w)
+    local BW = St.bodySize(w, H)
+    local tileW = math.floor((BW - 2 * PAD - (#TILES - 1) * GAP) / #TILES)
+    for i, t in ipairs(tiles) do
+        t:SetPoint("TOPLEFT", PAD + (i - 1) * (tileW + GAP), -(PAD + TOP_H + GAP))
+        -- the last one takes what rounding left, so the row ends where the panes below do
+        t:SetSize(i < #TILES and tileW or BW - 2 * PAD - (#TILES - 1) * (tileW + GAP), TILE_H)
+    end
+    EDITOR_W = BW - 2 * PAD - LIST_W - GAP
+    CAT_W, GUILD_W = EDITOR_W - 24, EDITOR_W - 60
+    dungeonW = math.floor((CAT_W - 26) / 2)
+    for _, part in ipairs({cats, catEdit, dungeons}) do part:SetWidth(CAT_W) end
+    dungeonList:SetWidth(CAT_W - 26)
+    noteEdit:SetWidth(EDITOR_W - 60)
+    guildList:SetWidth(GUILD_W)
+    for _, r in ipairs(guildRows) do
+        r:SetWidth(GUILD_W)
+        r.cats:SetWidth(GUILD_W)
+        r.note:SetWidth(GUILD_W)
+    end
+    if frame:IsShown() then showEditor() end
+end)
 ns.OnModuleChange("notes", function(on)
     if on then return end
     frame:Hide()

@@ -1,8 +1,8 @@
 -- Nearby target alert: a sound and an on-screen message when a mob you're after shows up nearby.
 -- It watches enemy nameplates, so it sees what your nameplates show (enemy nameplates on, the V key).
 -- What to watch comes from named lists: the ping macro's custom target, and companion addons
--- through KureqUtils.SetWatchList. It's part of the Ping macro module (its settings are on that page) and is off until
--- the player turns it on.
+-- through KureqUtils.SetWatchList. It's part of KU Ping (its settings are under KU Ping's in the Smart macros tab), works
+-- only while KU Ping is ticked, and is off until the player turns it on.
 local _, ns = ...
 local tinsert = table.insert
 
@@ -35,7 +35,7 @@ end
 -- Each mob (by GUID) alerts once a session. Lists are resent on every quest log update, so a
 -- changed list must not reset this, or every watched mob in view would alert again.
 local function check(unit)
-    if not (db and db.on and ns.IsOn("ping")) then return end
+    if not (db and db.on and ns.ping.on()) then return end
     local name = UnitName(unit)
     if not (name and watched[name:lower()]) or UnitIsDead(unit) or not UnitCanAttack("player", unit) then return end
     if UnitIsTapDenied and UnitIsTapDenied(unit) then return end -- tagged by someone else: no credit for you
@@ -56,9 +56,9 @@ local function checkAll()
     end
 end
 
-ns.OnModuleChange("ping", function(on) if on then checkAll() end end) -- mobs already in view when turned on
+tinsert(ns.ping.switched, function(on) if on then checkAll() end end) -- mobs already in view when turned on
 
-local watchLine
+local watching = "nothing yet" -- the names watched, as the Smart macros tab shows them
 function ns.setWatch(source, names)
     lists[source] = names
     wipe(watched)
@@ -69,28 +69,21 @@ function ns.setWatch(source, names)
             watched[n:lower()] = true
         end
     end
-    if watchLine then watchLine:SetText(#all > 0 and table.concat(all, ", ") or "nothing yet") end
+    watching = #all > 0 and table.concat(all, ", ") or "nothing yet"
     checkAll()
 end
 
--- Settings page ------------------------------------------------------------------------------
-
-local panel = ns.ping.panel
-ns.Header(panel, "Nearby alert")
-ns.GrowingText(panel, "GameFontDisable"):SetText("A sound and an on-screen message when the ping macro's mobs (or "
-    .. "a companion addon's) show up nearby. It uses enemy nameplates, so turn those on (V).")
-
-ns.Checkbox(panel, "Alert when nearby", "Show a message when one of the watched mobs appears. Off by default.",
-    function() return db and db.on end, function(v) db.on = v; if v then checkAll() end end)
-
-ns.Checkbox(panel, "Play a sound", "Play the raid warning sound with the message.",
-    function() return db and db.sound end, function(v) db.sound = v end)
-
-ns.Button(panel, "Test", 100, function() show("Test mob nearby") end, "Try the alert")
-
-ns.Header(panel, "Watching")
-watchLine = ns.GrowingText(panel)
-watchLine:SetText("nothing yet")
+-- For the Smart macros tab (SmartMacrosWindow.lua): its settings ("on", "sound"), a test alert and what's watched
+ns.alert = {
+    get = function(key) return db and db[key] end,
+    set = function(key, v)
+        if not db then return end
+        db[key] = v
+        if key == "on" and v then checkAll() end
+    end,
+    test = function() show("Test mob nearby") end,
+    watching = function() return watching end,
+}
 
 local f = CreateFrame("Frame")
 f:RegisterEvent("NAME_PLATE_UNIT_ADDED")

@@ -11,7 +11,7 @@ local GOLD = St.GOLD
 function St.commas(n) return BreakUpLargeNumbers and BreakUpLargeNumbers(n) or tostring(n) end
 
 -- The user's Striped bar texture, tinted: every bar and chart column uses it
-St.STRIPED = "Interface\\AddOns\\KureqUtils\\Media\\Striped.tga"
+St.STRIPED = "Interface\\AddOns\\KureqUtils\\media\\Striped.tga"
 function St.Striped(texture, color, vertical)
     texture:SetTexture(St.STRIPED)
     -- a column turns it a quarter, so its length runs up the bar: corners UL, LL, UR, LR
@@ -168,11 +168,58 @@ function St.MenuButton(parent, width, label, fill)
     return b
 end
 
+-- The settings page's controls (Core.lua), for the windows. Both clients have these templates (origin/forever and
+-- classic_era of the UI source).
+
+-- A choice, as the settings page's: Blizzard's dropdown (WowStyle1DropdownTemplate) showing label(), its menu built by
+-- fill(root) as St.MenuButton's. The menu is set up on the first Refresh, not at file load: setting it up reads the
+-- radios' selections, and saved variables aren't loaded then. Menus of actions (Insert, Add...) stay St.MenuButton.
+function St.Dropdown(parent, width, label, fill)
+    local d = CreateFrame("DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
+    d:SetWidth(width)
+    d:SetSelectionText(function() return label() end)
+    local ready
+    function d:Refresh()
+        if not ready then
+            ready = true
+            self:SetupMenu(function(_, root) fill(root) end)
+        end
+        self:GenerateMenu()
+    end
+    return d
+end
+
+-- A tick, as the settings page's (SettingsCheckboxTemplate: the large square box with a gold tick), with its label in
+-- box.Text to its right. The template's own hover shows an empty settings tooltip and lights the whole of its parent,
+-- so it's left out: set OnEnter for a tooltip.
+function St.Checkbox(parent, label, font)
+    local box = CreateFrame("CheckButton", nil, parent, "SettingsCheckboxTemplate")
+    box:SetScript("OnEnter", nil)
+    box:SetScript("OnLeave", nil)
+    box.Text = St.Text(box, font or "GameFontHighlight")
+    box.Text:SetPoint("LEFT", box, "RIGHT", 4, 0)
+    box.Text:SetText(label or "")
+    return box
+end
+
+-- A text box, as the settings page's: InputBoxTemplate 22 high in the chat font, no focus until clicked.
+function St.EditBox(parent, width, letters)
+    local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    box:SetHeight(22)
+    if width then box:SetWidth(width) end
+    box:SetFontObject("ChatFontNormal")
+    box:SetAutoFocus(false)
+    if letters then box:SetMaxLetters(letters) end
+    return box
+end
+
 -- A breakdown row, width wide, as Road to Sixty's: a white label and a grey value on top, under them a thin dark
--- track with a bar in color for the share. Set(label, value, share 0-1); place it with SetPoint.
+-- track with a bar in color for the share. Set(label, value, share 0-1); place it with SetPoint; Resize(width) when
+-- its pane changes size.
 function St.BarRow(parent, width, color)
     local r = CreateFrame("Frame", nil, parent)
     r:SetSize(width, 22)
+    r.share = 0
     r.value = St.Text(r, "GameFontDisableSmall")
     r.value:SetPoint("TOPRIGHT", 0, -2)
     r.value:SetJustifyH("RIGHT")
@@ -191,26 +238,38 @@ function St.BarRow(parent, width, color)
     function r:Set(label, value, share)
         self.label:SetText(label)
         self.value:SetText(value)
+        self.share = share
         self.bar:SetWidth(math.max(1, width * math.min(1, share)))
+    end
+    function r:Resize(w)
+        width = w
+        self:SetWidth(w)
+        self.bar:SetWidth(math.max(1, w * math.min(1, self.share)))
     end
     return r
 end
 
 -- Label / value pairs, as Road to Sixty's cards: a gold label on the left, its white value right-aligned to the
--- column's edge, n of them in columns of colW from (x, y), 18 apart. Returns {label =, value =} for each.
+-- column's edge, n of them in columns of colW from (x, y), 18 apart. Returns {label =, value =} for each, and
+-- facts:SetColumnWidth(colW) to place them again when the pane changes size.
 function St.Facts(parent, n, x, y, colW, columns)
     local facts = {}
     for i = 1, n do
-        local col, row = (i - 1) % columns, math.floor((i - 1) / columns)
-        local fx, fy = x + col * (colW + 16), y - row * 18
-        local label = St.Text(parent, "GameFontNormalSmall")
-        label:SetPoint("TOPLEFT", parent, "TOPLEFT", fx, fy)
-        local value = St.Text(parent, "GameFontHighlightSmall")
-        value:SetPoint("TOPRIGHT", parent, "TOPLEFT", fx + colW, fy)
-        value:SetJustifyH("RIGHT")
-        value:SetWidth(colW - 70) -- a long value ends in "..." before it reaches its label
-        facts[i] = {label = label, value = value}
+        facts[i] = {label = St.Text(parent, "GameFontNormalSmall"), value = St.Text(parent, "GameFontHighlightSmall")}
+        facts[i].value:SetJustifyH("RIGHT")
     end
+    function facts:SetColumnWidth(w)
+        for i, f in ipairs(self) do
+            local col, row = (i - 1) % columns, math.floor((i - 1) / columns)
+            local fx, fy = x + col * (w + 16), y - row * 18
+            f.label:ClearAllPoints()
+            f.label:SetPoint("TOPLEFT", parent, "TOPLEFT", fx, fy)
+            f.value:ClearAllPoints()
+            f.value:SetPoint("TOPRIGHT", parent, "TOPLEFT", fx + w, fy)
+            f.value:SetWidth(w - 70) -- a long value ends in "..." before it reaches its label
+        end
+    end
+    facts:SetColumnWidth(colW)
     return facts
 end
 
@@ -248,3 +307,73 @@ function St.Window(name, title, w, h)
     -- no ground or border of its own: the window's background shows through, the panes have borders (user decision)
     return frame, body
 end
+
+-- Resizing, which a window opts into once its content is built: Blizzard's resize grip at the bottom right, the
+-- design size the smallest, the screen the largest. onResize(w, h) re-lays what anchors can't stretch; it runs now
+-- with the design size, at every size change, and once saved variables load with the size saved for the window
+-- (account-wide, KureqUtilsDB.windows[name]). A double-click on the grip goes back to the design size.
+ns.defaults.windows = {}
+local resizable = {}
+-- the largest size: the screen, less the page tabs hanging under the window (St.Tab: 32 high, 2 of it on the window)
+local TABS_H = 30
+local function largest(frame)
+    local sw, sh = UIParent:GetWidth() or 0, UIParent:GetHeight() or 0
+    if sw <= 0 then return math.huge, math.huge end
+    return math.max(frame.designW, sw), math.max(frame.designH, sh - (frame.kuTabs and TABS_H or 0))
+end
+local function bound(frame)
+    local mw, mh = largest(frame)
+    frame:SetResizeBounds(frame.designW, frame.designH, mw ~= math.huge and mw or nil, mh ~= math.huge and mh or nil)
+end
+local function fit(frame, w, h)
+    local mw, mh = largest(frame)
+    w, h = math.min(mw, math.max(frame.designW, w)), math.min(mh, math.max(frame.designH, h))
+    frame:SetSize(w, h)
+    frame.onResize(w, h)
+end
+local function restore(frame, db)
+    local saved = db.windows[frame:GetName()]
+    if type(saved) ~= "table" or type(saved.w) ~= "number" or type(saved.h) ~= "number" then return false end
+    fit(frame, saved.w, saved.h)
+    return true
+end
+function St.Resizable(frame, onResize)
+    local name = frame:GetName()
+    frame.designW, frame.designH, frame.onResize = frame:GetWidth(), frame:GetHeight(), onResize
+    frame:SetResizable(true)
+    bound(frame)
+    frame:SetScript("OnSizeChanged", function(self, w, h) self.onResize(w, h) end)
+    local grip = CreateFrame("Button", nil, frame, "PanelResizeButtonTemplate")
+    grip:SetPoint("BOTTOMRIGHT", -4, 4)
+    grip:SetFrameLevel(frame:GetFrameLevel() + 10) -- over the panes
+    grip:SetScript("OnMouseDown", function(_, button) if button == "LeftButton" then frame:StartSizing("BOTTOMRIGHT") end end)
+    grip:SetScript("OnMouseUp", function()
+        frame:StopMovingOrSizing()
+        local w, h = math.floor(frame:GetWidth() + 0.5), math.floor(frame:GetHeight() + 0.5)
+        local design = w == frame.designW and h == frame.designH
+        if ns.db then ns.db.windows[name] = not design and {w = w, h = h} or nil end
+        frame.onResize(w, h)
+    end)
+    grip:SetScript("OnDoubleClick", function()
+        if ns.db then ns.db.windows[name] = nil end
+        fit(frame, frame.designW, frame.designH)
+    end)
+    frame.resizeGrip = grip
+    resizable[#resizable + 1] = frame
+    onResize(frame.designW, frame.designH)
+    if ns.db then restore(frame, ns.db) end -- made after saved variables loaded
+end
+ns.onLoad[#ns.onLoad + 1] = function(db)
+    for _, frame in ipairs(resizable) do restore(frame, db) end
+end
+-- a new screen size or UI scale: new bounds, and every window (open or at its saved size) fitted to them. The saved
+-- size itself is kept, so a larger screen later gets it back.
+local screenWatch = CreateFrame("Frame")
+screenWatch:RegisterEvent("DISPLAY_SIZE_CHANGED")
+screenWatch:RegisterEvent("UI_SCALE_CHANGED")
+screenWatch:SetScript("OnEvent", function()
+    for _, frame in ipairs(resizable) do
+        bound(frame)
+        if not (ns.db and restore(frame, ns.db)) then fit(frame, frame:GetWidth(), frame:GetHeight()) end
+    end
+end)
