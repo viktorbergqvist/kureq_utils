@@ -9,7 +9,8 @@ ns.changelog = {
 • Ready-made macros for your class and for Kureq Utils' own commands.
 • Smart macros that keep themselves up to date: potion, mana, drink, food, bandage, hearth, mount and pet.
 • KU Mount uses Ghost Wolf, Travel or Cat Form, or Aspect of the Cheetah where you can't mount.
-• The Ping macro is now KU Ping, a smart macro; your settings carry over.
+• The Ping macro module is gone: it moved into Macros as KU Ping, in the Smart macros tab.
+• Your Ping settings, /ku ping and Nearby alert carry over; KU Ping is ticked for you if you used it.
 • Optional: open this window instead of the game's macros.
 
 |cffe6cc80Loadouts|r
