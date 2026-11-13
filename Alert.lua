@@ -88,3 +88,4 @@ ns.alert = {
 local f = CreateFrame("Frame")
 f:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 f:SetScript("OnEvent", function(_, _, unit) check(unit) end)
+ns.watch("Nearby alert", f)

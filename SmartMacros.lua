@@ -132,11 +132,18 @@ function SM.restores(text, what)
     local _, high = text:match("restores ([%d%.]+) to ([%d%.]+) " .. what)
     return tonumber(high or text:match("restores ([%d%.]+) " .. what))
 end
+-- item ID -> {conjured, skill, instance} from its bag tooltip, kept: neither changes, and every bag change while
+-- looting updates the macros, which read each usable item's tooltip again. A tooltip read before its data loaded gets
+-- TOOLTIP_DATA_UPDATE for its data instance later, and is read again then.
+local tipInfo = {}
+-- data instance -> item ID of an empty tooltip in the last bag read (an empty one is never kept: every bag read reads
+-- it again). Its update refreshes the macros by itself at most TIP_TRIES times per item a session (tipTries).
+local tipEmpty, tipTries, TIP_TRIES = {}, {}, 3
 local function tooltipLines(bag, slot)
     local data = C_TooltipInfo and C_TooltipInfo.GetBagItem and C_TooltipInfo.GetBagItem(bag, slot)
     local out = {}
     for _, line in ipairs(data and data.lines or {}) do out[#out + 1] = line.leftText or "" end
-    return out
+    return out, data and data.dataInstanceID
 end
 -- "Requires First Aid (150)" from the client's own string
 local SKILL_PATTERN = ITEM_MIN_SKILL and "^" .. ITEM_MIN_SKILL:gsub("[%(%)%.%-%+%[%]]", "%%%0"):gsub("%%s", "(.+)")
@@ -189,15 +196,27 @@ function SM.read(bag, slot)
         end
     end
     if not next(item.kinds) then return nil end
-    for _, line in ipairs(tooltipLines(bag, slot)) do
-        if ITEM_CONJURED and line == ITEM_CONJURED then item.conjured = true end
-        local skill, rank
-        if SKILL_PATTERN then skill, rank = line:match(SKILL_PATTERN) end
-        if skill then item.skill = {name = skill, rank = tonumber(rank)} end
+    local tip = tipInfo[id]
+    if not tip then
+        local lines, instance = tooltipLines(bag, slot)
+        tip = {instance = instance}
+        for _, line in ipairs(lines) do
+            if ITEM_CONJURED and line == ITEM_CONJURED then tip.conjured = true end
+            local skill, rank
+            if SKILL_PATTERN then skill, rank = line:match(SKILL_PATTERN) end
+            if skill then tip.skill = {name = skill, rank = tonumber(rank)} end
+        end
+        if #lines > 0 then
+            tipInfo[id] = tip
+        elseif instance and (tipTries[id] or 0) < TIP_TRIES then -- never kept; its update may bring the next read
+            tipEmpty[instance] = id
+        end
     end
+    item.conjured, item.skill = tip.conjured, tip.skill
     return item
 end
 function SM.bagItems()
+    wipe(tipEmpty) -- only what's in the bags now waits for its tooltip
     local items = {}
     for bag = 0, (NUM_BAG_SLOTS or 4) + (NUM_REAGENTBAG_SLOTS or 0) do
         for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
@@ -520,7 +539,7 @@ function SM.update()
     if MacroFrame and MacroFrame:IsShown() then return C_Timer.After(SM.retry, schedule) end
     wipe(textPending)
     SM.moveOld(s)
-    local items = SM.bagItems()
+    local items = next(s.on) and SM.bagItems() or nil -- none ticked: the bags aren't read
     for _, kind in ipairs(SM.KINDS) do
         local name = SM.NAMES[kind]
         local status, why = SM.keep(s.made, kind, name, true, s.on[kind] and SM.body(kind, items) or nil)
@@ -554,7 +573,7 @@ function schedule()
     pending = true
     C_Timer.After(0.5, function()
         pending = false
-        ns.CombatQueue.Defer("smartmacros", SM.update)
+        ns.CombatQueue.Defer("smartmacros", function() SM.update() end) -- as it is then (Debug timing may wrap it)
     end)
 end
 SM.schedule = schedule
@@ -576,6 +595,24 @@ events:SetScript("OnEvent", function(_, event, spellID)
     if ns.IsOn("macros") then schedule() end
 end)
 ns.OnModuleChange("macros", function(on) if on then schedule() end end)
+-- a tooltip read before its data loaded: forgotten, and the macros updated with the whole tooltip
+local tipEvents = CreateFrame("Frame")
+pcall(tipEvents.RegisterEvent, tipEvents, "TOOLTIP_DATA_UPDATE") -- a client without the event errors on registering it
+tipEvents:SetScript("OnEvent", function(_, _, instance)
+    local dropped = false
+    for key, id in pairs(tipEmpty) do
+        if instance == nil or key == instance then
+            tipTries[id], tipEmpty[key], dropped = (tipTries[id] or 0) + 1, nil, true
+        end
+    end
+    if instance == nil then wipe(tipInfo) end -- any may have changed: read again on the next bag read
+    for id, tip in pairs(tipInfo) do -- a kept tooltip that changed
+        if tip.instance == instance then tipInfo[id], dropped = nil, true end
+    end
+    if dropped and ns.IsOn("macros") then schedule() end
+end)
+ns.watch("Smart macros", events)
+ns.watch("Smart macros update", SM, "update")
 
 -- For the Smart macros tab: a setting changed (fn gets the saved table), then the macros brought up to date
 function SM.change(fn)

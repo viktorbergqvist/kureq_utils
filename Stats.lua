@@ -16,7 +16,11 @@ local seen = {} -- mob name -> level, from the last time the target, mouseover o
 
 local function secret(v) return issecretvalue ~= nil and issecretvalue(v) end
 
-local guidName, npcName = {}, {} -- creature GUID and NPC ID -> name, for loot (this session)
+-- NPC ID -> name, for loot (this session); by NPC, not by GUID, so it doesn't grow with every mob a nameplate shows
+local npcName = {}
+-- expectedXp's answers until the next kill (for the kills table xpMemoFor): a unit tooltip is drawn again 5 times a
+-- second while you point at a unit frame, and each answer looks through all your kill rows
+local xpMemo, xpMemoFor = {}, nil
 local function npcID(guid) return guid:match("^Creature%-%d+%-%d+%-%d+%-%d+%-(%d+)") end
 local function look(unit)
     if not UnitExists(unit) or UnitIsPlayer(unit) then return end
@@ -24,7 +28,6 @@ local function look(unit)
     if name and level and not secret(name) and not secret(level) then seen[name] = level end
     local guid = UnitGUID(unit)
     if name and guid and not secret(name) and not secret(guid) then
-        guidName[guid] = name
         local id = npcID(guid)
         if id then npcName[id] = name end
     end
@@ -96,6 +99,7 @@ local function record(name, xp)
         S.mine.kills[key] = row
     end
     row.count, row.xp = row.count + 1, row.xp + xp
+    xpMemoFor = nil -- expectedXp counts this kill
     -- totals per your level and per hour (time() / 3600) for the graphs; they start with this version
     for t, k in pairs({byLevel = player, byHour = math.floor(time() / 3600)}) do
         local bucket = S.mine[t][k] or {count = 0, xp = 0, zones = {}}
@@ -158,7 +162,7 @@ local PARTY_BONUS = {1, 1, 1.166, 1.3, 1.4}
 local function groupShare(xp, size) return math.floor(xp * (PARTY_BONUS[size] or 1) / size + 0.5) end
 
 -- XP a kill of the unit would give, and where the number comes from
-local function expectedXp(name, level, elite)
+local function computeXp(name, level, elite)
     local diff, size = level > 0 and level - UnitLevel("player") or nil, groupSize()
     -- your kills of it at this level difference and the group size you're in now; else of any mob of that level
     -- (same level and difference: killed at your level), which learns the server's real XP; else the formula
@@ -177,6 +181,16 @@ local function expectedXp(name, level, elite)
     return groupShare(formulaXp(UnitLevel("player"), level) * (elite and 2 or 1), size), "estimate"
 end
 
+local function expectedXp(name, level, elite)
+    if xpMemoFor ~= S.mine.kills then xpMemo, xpMemoFor = {}, S.mine.kills end -- cleared: a new table
+    local key = name .. "|" .. level .. "|" .. tostring(elite) .. "|" .. groupSize() .. "|" .. UnitLevel("player")
+    local m = xpMemo[key]
+    if not m then
+        m = {computeXp(name, level, elite)}
+        xpMemo[key] = m
+    end
+    return m[1], m[2], m[3]
+end
 S.expectedXp = expectedXp
 
 -- How many kills giving xp each take you to your next level; nil at the level cap, for no XP, or with it turned off.
@@ -203,13 +217,15 @@ local function onTooltipUnit(tip)
             toLevel and (" · %d to level"):format(toLevel) or ""), 0.6, 0.8, 1)
     end
 end
+S.tooltip = onTooltipUnit -- through S, so the Debug page can time it
 if TooltipDataProcessor and Enum and Enum.TooltipDataType then
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tip)
-        if tip == GameTooltip then onTooltipUnit(tip) end
+        if tip == GameTooltip then S.tooltip(tip) end
     end)
 else
-    GameTooltip:HookScript("OnTooltipSetUnit", onTooltipUnit)
+    GameTooltip:HookScript("OnTooltipSetUnit", function(tip) S.tooltip(tip) end)
 end
+ns.watch("Kill stats tooltip", S, "tooltip")
 
 -- Kills from before zones were kept get an approximate zone, once (user decision 2026-11-11: they were made where
 -- the others were): each mob's go to the zone it died in most, with map spots copied from its recorded ones and
@@ -510,7 +526,7 @@ local counted = {} -- "GUID loot" / "GUID skin" -> true: each corpse counts once
 local MONEY = Enum and Enum.LootSlotType and Enum.LootSlotType.Money or 2
 -- c = {items = {[itemID] = how many}, money = copper} from one corpse; true when it was counted
 local function countCorpse(guid, kind, c)
-    local name = guidName[guid] or npcName[npcID(guid) or ""]
+    local name = npcName[npcID(guid) or ""]
     if not name or counted[guid .. kind] then return false end
     counted[guid .. kind] = true
     local mob = S.mine.mobs[name] or {spots = {}, zones = {}}
@@ -674,6 +690,7 @@ events:SetScript("OnEvent", function(_, event, arg, _, spellID)
         if ns.db.stats.loot then S.checkEmpty(unit) end
     else look(arg) end -- NAME_PLATE_UNIT_ADDED gives the nameplate's unit
 end)
+ns.watch("Kill stats", events)
 
 -- Settings page under Kureq Utils
 local panel, category = ns.AddSettingsPage("Kill stats",

@@ -137,7 +137,7 @@ dragHl:SetColorTexture(1, 1, 1, 0.15)
 drag:RegisterForDrag("LeftButton")
 -- kind's macro on the cursor (the detail's icon, or dragging its row)
 local function pickup(kind)
-    local m = SM.find(kind == "ping" and P.NAME or SM.NAMES[kind], true)
+    local m = SM.find(kind == "ping" and P.macroName() or SM.NAMES[kind], true)
     if not (isOn(kind) and m) then
         return detail.status:SetText(("Tick %s first: Kureq Utils makes the macro once it's on."):format(nameOf(kind)))
     end

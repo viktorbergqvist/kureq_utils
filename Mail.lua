@@ -295,7 +295,7 @@ local function changed()
     M.refreshButton()
     if M.changed then M.changed() end -- the window's refresh
 end
-M.notify = changed -- after every change to the rules or Never send: the mailbox button and the window followM.isOpen = function() return mailOpen end
+M.notify = changed -- after every change to the rules or Never send: the mailbox button and the window follow
 
 -- the chat summary: per recipient what went, then what stayed and why
 local function finish(why)
@@ -484,6 +484,7 @@ events:SetScript("OnEvent", function(_, event, a1, a2)
     end
 end)
 
+ns.watch("Mail rules", events)
 ns.OnModuleChange("mail", function(on)
     if not on and run then finish("Mail rules was turned off") end
     M.refreshButton()

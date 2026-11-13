@@ -258,13 +258,15 @@ local function onTooltipUnit(tip)
     end
     tip:Show() -- resize to the added lines
 end
+N.tooltip = onTooltipUnit -- through N, so the Debug page can time it
 if TooltipDataProcessor and Enum and Enum.TooltipDataType then
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tip)
-        if tip == GameTooltip then onTooltipUnit(tip) end
+        if tip == GameTooltip then N.tooltip(tip) end
     end)
 else
-    GameTooltip:HookScript("OnTooltipSetUnit", onTooltipUnit)
+    GameTooltip:HookScript("OnTooltipSetUnit", function(tip) N.tooltip(tip) end)
 end
+ns.watch("Notes tooltip", N, "tooltip")
 
 -- The Looking For Group window (Blizzard_GroupFinder_VanillaStyle, loaded on demand; Forever has no applicant list):
 -- a rated leader's stars before their name in the list, and on a group's tooltip each noted member's stars and rating
@@ -587,6 +589,7 @@ dungeonWatch:SetScript("OnEvent", function(_, event)
     if visit and currentDungeon() == visit.dungeon then visit.at = time() end
 end)
 ns.OnModuleChange("notes", function(on) if on then checkDungeon() end end)
+ns.watch("Notes dungeons", dungeonWatch)
 
 -- Group warning: a chat line and the raid-warning sound when a player rated 2 stars or less, or blocked in any way,
 -- joins your group (once per player until you leave the group) or whispers you (once per player per 10 minutes).
@@ -627,8 +630,26 @@ local warned, whispered = {}, {} -- key -> true this group; key -> GetTime() of 
 local warner = CreateFrame("Frame")
 warner:RegisterEvent("GROUP_ROSTER_UPDATE")
 warner:RegisterEvent("CHAT_MSG_WHISPER")
+local function checkGroup()
+    if not IsInGroup() then wipe(warned) end
+    if not (ns.db and ns.db.notes.warn and ns.IsOn("notes")) then return end
+    for key, name in pairs(members()) do
+        local entry = N.get(name)
+        local text = not warned[key] and not N.lowRated(entry) and N.guildWarnText(name, "joined your group")
+        if not warned[key] and (text or N.lowRated(entry)) then
+            warned[key] = true
+            warn(text or entry, "joined your group")
+        end
+    end
+end
+local rosterQueued -- a raid sends the roster event many times at once: the group is looked through once, next frame
 warner:SetScript("OnEvent", function(_, event, _, sender)
-    if event == "GROUP_ROSTER_UPDATE" and not IsInGroup() then wipe(warned) end
+    if event == "GROUP_ROSTER_UPDATE" then
+        if not IsInGroup() then wipe(warned) end -- now: a new group before the check would keep the last one's
+        if rosterQueued then return end
+        rosterQueued = true
+        return C_Timer.After(0, function() rosterQueued = false; checkGroup() end)
+    end
     if not (ns.db and ns.db.notes.warn and ns.IsOn("notes")) then return end
     if event == "CHAT_MSG_WHISPER" then
         if not sender or secret(sender) then return end
@@ -640,15 +661,8 @@ warner:SetScript("OnEvent", function(_, event, _, sender)
         whispered[key] = GetTime()
         return warn(text or entry, "whispered you")
     end
-    for key, name in pairs(members()) do
-        local entry = N.get(name)
-        local text = not warned[key] and not N.lowRated(entry) and N.guildWarnText(name, "joined your group")
-        if not warned[key] and (text or N.lowRated(entry)) then
-            warned[key] = true
-            warn(text or entry, "joined your group")
-        end
-    end
 end)
+ns.watch("Notes warnings", warner)
 -- turned on: catch up on who's in the group now (warned keeps anyone already warned from a second line)
 ns.OnModuleChange("notes", function(on) if on then warner:GetScript("OnEvent")(warner, "GROUP_ROSTER_UPDATE") end end)
 

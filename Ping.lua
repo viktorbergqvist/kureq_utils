@@ -1,4 +1,4 @@
--- KU Ping (a smart macro, part of Macros): keeps KureqPingCustom, an account macro that targets a mob (or a quest's
+-- KU Ping (a smart macro, part of Macros): keeps KureqPing, an account macro that targets a mob (or a quest's
 -- mobs, from Questie) and pings it. Nothing acts on its own: it rewrites the macro out of combat and you press it.
 -- It's off until ticked (account-wide, KureqUtilsDB.smartMacros.on.ping); the old Ping macro module's players
 -- start ticked. Like the other smart macros it's written only while it's ours (KureqUtilsDB.ping.made, account-wide as
@@ -6,7 +6,7 @@
 -- before each rewrite. ns.build and ns.writeMacro also serve companion addons through the KureqUtils API.
 local _, ns = ...
 local SM = ns.macros.smart
-local CUSTOM = "KureqPingCustom"
+local CUSTOM, OLD = "KureqPing", "KureqPingCustom" -- KureqPingCustom: its name until 2026-11-13
 local fmt, tinsert = string.format, table.insert
 local say, trim = ns.say, ns.trim
 
@@ -26,7 +26,7 @@ end
 ns.ping.on = pingOn
 
 -- Once per character, once macros are known: the Ping macro was its own module, on unless turned off. KU Ping starts
--- ticked when it was on and KureqPingCustom exists, and adopts that macro as it is. Turned off, it also kept companion
+-- ticked when it was on and KureqPingCustom (its old name) exists, and adopts that macro as it is. Turned off, it also kept companion
 -- addons' ping macros from being written: that stays off (pingCompanionsOff).
 local function migrate()
     local s, c = SM.db(), ns.charDB
@@ -37,16 +37,42 @@ local function migrate()
         -- account-wide now: only while no character has decided it yet
         if not s.pingCompanionsSet then s.pingCompanionsOff = true end
     else
-        local m, twin = SM.find(CUSTOM, true)
+        local m, twin = SM.find(OLD, true)
         if m and not twin then
             s.on.ping = true
-            db.made = {name = CUSTOM, body = m.body}
+            db.made = {name = OLD, body = m.body} -- renamed by rename() on the first write
         end
     end
     s.pingCompanionsSet = true -- the first character's choice stands for the account
     c.pingMoved = true
 end
 tinsert(ns.onLoad, function(root) db = root.ping end)
+
+-- The macro's name: KureqPing, or KureqPingCustom while the one Kureq Utils made under that name can't be renamed yet
+local function macroName()
+    return db and type(db.made) == "table" and db.made.name == OLD and OLD or CUSTOM
+end
+
+-- KureqPingCustom became KureqPing: the one Kureq Utils made (and the player didn't change) is renamed in place, so
+-- its bar slots keep it (EditMacro, as Blizzard's own rename), and its ownership record, history and the loadouts'
+-- references move with it. A General macro
+-- of the player's already called KureqPing blocks it: said once, and KureqPingCustom is kept until that one's gone. A
+-- changed one isn't ours: SM.keep lets it go as before. Call it as SM.keep (out of combat, macro window closed).
+local function rename()
+    local rec = db.made
+    if type(rec) ~= "table" or rec.name ~= OLD then return end
+    local m, twin = SM.find(OLD, true)
+    if not m or twin or not SM.sameText(m.body, rec.body) then return end
+    if SM.find(CUSTOM, true) then
+        return SM.sayOnce("pingrename", ("KU Ping's macro is called %s now, but you already have a macro of that name: "
+            .. "KU Ping keeps using %s until you rename or delete yours."):format(CUSTOM, OLD))
+    end
+    -- the Macros rename: its history goes with it
+    local now = ns.macros.save(m, {name = CUSTOM}, {name = m.name, body = m.body})
+    if not now then return end
+    db.made = {name = CUSTOM, body = now.body}
+    ns.loadouts.renameAccountMacro(OLD, CUSTOM) -- saved loadouts and backups put it on their slots by name
+end
 
 -- The lines after the target lines: the marker, the action, and dropping a corpse picked by them.
 local function tail()
@@ -84,25 +110,27 @@ local function writeCustom(text)
         end
         return
     end
-    local existed = GetMacroInfo(CUSTOM)
-    local status, why = SM.keep(db, "made", CUSTOM, true, text, "Ability_Hunter_SniperShot")
+    rename()
+    local name = macroName()
+    local existed = GetMacroInfo(name)
+    local status, why = SM.keep(db, "made", name, true, text, "Ability_Hunter_SniperShot")
     local problem
     if status == "ok" and not existed then
-        say("macro %s created. Drag it from your general macros to a bar.", CUSTOM)
+        say("macro %s created. Drag it from your general macros to a bar.", name)
     elseif status == "lost" then
         SM.db().on.ping = nil
-        problem = SM.lostText(CUSTOM)
+        problem = SM.lostText(name)
         say(problem)
         switched(false)
     elseif status == "taken" then
         problem = ("You already have a macro called %s that Kureq Utils didn't make: rename it, and KU Ping makes its "
-            .. "own."):format(CUSTOM)
+            .. "own."):format(name)
         SM.sayOnce("pingtaken", problem)
     elseif status == "twin" then
-        problem = ("You have two macros called %s: delete one for KU Ping to keep it up to date."):format(CUSTOM)
+        problem = ("You have two macros called %s: delete one for KU Ping to keep it up to date."):format(name)
         SM.sayOnce("pingtwin", problem)
     elseif status == "full" then
-        problem = ("%s can't be made: %s"):format(CUSTOM, why)
+        problem = ("%s can't be made: %s"):format(name, why)
         SM.sayOnce("pingfull", problem)
     end
     SM.problems.ping = problem
@@ -111,7 +139,7 @@ end
 
 function ns.writeMacro(name, text)
     if not ns.IsOn("macros") then return end
-    if name == CUSTOM then return writeCustom(text) end
+    if name == CUSTOM or name == OLD then return writeCustom(text) end
     -- companion addons' macros have their own switches, and this one
     local s = SM.db()
     if not s or s.pingCompanionsOff then return end
@@ -251,7 +279,7 @@ end
 ns.OnModuleChange("macros", function(on) if SM.db() and SM.db().on.ping then switched(on) end end)
 
 local P = ns.ping
-P.NAME, P.MARKERS, P.update = CUSTOM, MARKERS, updateCustom
+P.NAME, P.MARKERS, P.update, P.macroName = CUSTOM, MARKERS, updateCustom, macroName
 P.TARGET_COMMANDS = {{"/TargetExact", "/TargetExact (exact name)"}, {"/target", "/target (names that start with it)"}}
 function P.db() return db end
 -- The macro's text as it's built now (a placeholder for the target while there's none)
@@ -261,7 +289,10 @@ function P.setOn(v)
     local s = SM.db()
     if not s then return end
     s.on.ping = v or nil
-    if v and db then SM.adopt(db, "made", CUSTOM, true) end
+    if v and db then
+        SM.adopt(db, "made", macroName(), true)
+        if not db.made then SM.adopt(db, "made", OLD, true) end -- one from before the rename: renamed on the next write
+    end
     switched(v)
 end
 -- One of targetCmd, marker, lastTarget, questClick
@@ -303,7 +334,7 @@ local function setQuest(id, label)
     end
     db.custom, db.customQuest, db.customNames = label, id, nil
     updateCustom()
-    say("%s pings the mobs of %s%s: %s%s", CUSTOM, label, InCombatLockdown() and " (after combat)" or "",
+    say("%s pings the mobs of %s%s: %s%s", macroName(), label, InCombatLockdown() and " (after combat)" or "",
         #names > 0 and table.concat(names, ", ") or "none left",
         fromLog and " (from your quest log: kill objectives only; QuestieDB adds item drops)" or "")
     refreshPreview()
@@ -314,7 +345,7 @@ function setCustom(text)
     if id then return setQuest(id, text:match("|h(%[.-%])|h") or ("quest " .. id)) end
     db.custom, db.customQuest, db.customNames = text, nil, nil
     updateCustom()
-    say("%s pings %s%s", CUSTOM, text, InCombatLockdown() and " (after combat)" or "")
+    say("%s pings %s%s", macroName(), text, InCombatLockdown() and " (after combat)" or "")
     refreshPreview()
 end
 
@@ -323,7 +354,7 @@ function ns.setCustomNames(label, names)
     if not pingOn() then return end
     db.custom, db.customQuest, db.customNames = label, nil, names
     updateCustom()
-    say("%s pings %s%s: %s", CUSTOM, label, InCombatLockdown() and " (after combat)" or "", table.concat(names, ", "))
+    say("%s pings %s%s: %s", macroName(), label, InCombatLockdown() and " (after combat)" or "", table.concat(names, ", "))
     refreshPreview()
 end
 
@@ -367,7 +398,7 @@ end))
 ns.AddCommand("ping", "/ku ping <name or quest link> (or just /ku <quest link>) - what " .. CUSTOM .. " targets", whenTicked(function(rest)
     rest = trim(rest)
     if rest == "" then
-        say("/ku ping <name or quest link>; %s targets %s.", CUSTOM, db.custom or "nothing yet")
+        say("/ku ping <name or quest link>; %s targets %s.", macroName(), db.custom or "nothing yet")
     else
         setCustom(rest)
     end
@@ -386,3 +417,4 @@ f:SetScript("OnEvent", function()
     if InCombatLockdown() and db and pingOn() then ns.CombatQueue.Defer("ping", updateCustom) end
     scheduleCustom()
 end)
+ns.watch("KU Ping", f)

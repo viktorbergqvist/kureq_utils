@@ -81,6 +81,86 @@ end
 -- other files' checks: ns.debug.run({{name, fn}, ...}) when they find something out (Mail rules' chained send)
 ns.debug = {run = run}
 
+-- Timing: while Debug checks are on, each watched handler (ns.watch) is wrapped to count its calls and time them with
+-- debugprofilestop, per event for an event frame; off, the handlers are put back as they were. "Show performance"
+-- prints each addon's memory and the handlers that took longest since timing started.
+local timings, since = {}, nil -- label -> {calls, ms, max}; GetTime() when timing started
+local function add(label, start, ...)
+    local ms = debugprofilestop() - start
+    local t = timings[label]
+    if not t then
+        t = {calls = 0, ms = 0, max = 0}
+        timings[label] = t
+    end
+    t.calls, t.ms, t.max = t.calls + 1, t.ms + ms, math.max(t.max, ms)
+    return ...
+end
+function ns.debug.wrap(w)
+    if w.wrapper then return end
+    if w.key then
+        local fn = w.target[w.key]
+        if type(fn) ~= "function" then return end
+        w.original = fn
+        w.wrapper = function(...) return add(w.name, debugprofilestop(), fn(...)) end
+        w.target[w.key] = w.wrapper
+    else
+        local fn = w.target:GetScript("OnEvent")
+        if not fn then return end
+        local labels = {}
+        w.original = fn
+        w.wrapper = function(frame, event, ...)
+            local label = labels[event]
+            if not label then
+                label = w.name .. ": " .. tostring(event)
+                labels[event] = label
+            end
+            return add(label, debugprofilestop(), fn(frame, event, ...))
+        end
+        w.target:SetScript("OnEvent", w.wrapper)
+    end
+end
+local function unwrap(w)
+    if not w.wrapper then return end
+    if w.key then
+        if w.target[w.key] == w.wrapper then w.target[w.key] = w.original end
+    elseif w.target:GetScript("OnEvent") == w.wrapper then
+        w.target:SetScript("OnEvent", w.original)
+    end
+    w.wrapper, w.original = nil, nil
+end
+local function setTiming(on)
+    ns.debug.timing = on
+    if on and not since then since = GetTime() end
+    for _, w in ipairs(ns.watched) do
+        if on then ns.debug.wrap(w) else unwrap(w) end
+    end
+end
+tinsert(ns.onLoad, function(root) if root.debug.on then setTiming(true) end end)
+
+local ADDONS = {"KureqUtils", "KureqProfessionsGuide", "KureqRestedXp"}
+function ns.debug.report()
+    if UpdateAddOnMemoryUsage then UpdateAddOnMemoryUsage() end
+    local mem = {}
+    for _, name in ipairs(ADDONS) do
+        local ok, kb = pcall(GetAddOnMemoryUsage, name)
+        if ok and type(kb) == "number" and kb > 0 then mem[#mem + 1] = fmt("%s %.0f KB", name, kb) end
+    end
+    ns.say("memory: %s", #mem > 0 and concat(mem, ", ") or "unknown")
+    if not since then return ns.say("timing: turn Debug checks on, play a while, then show it again.") end
+    local labels = {}
+    for label in pairs(timings) do labels[#labels + 1] = label end
+    sort(labels, function(a, b) return timings[a].ms > timings[b].ms end)
+    ns.say("timing over %.0f min%s:", (GetTime() - since) / 60, #labels > 15 and ", the 15 slowest" or "")
+    for i = 1, math.min(#labels, 15) do
+        local t = timings[labels[i]]
+        ns.say("%s: %d calls, %.1f ms in all, %.3f ms each, %.2f ms at most", labels[i], t.calls, t.ms, t.ms / t.calls,
+            t.max)
+    end
+    if #labels == 0 then ns.say("nothing timed yet.") end
+    -- kept after turning the checks off (decision 2026-11-13): Reset timing clears them
+    if not ns.debug.timing then ns.say("Debug checks are off: these are from while they were on.") end
+end
+
 -- the page's results, one line per check: "Zul'Farrak · target level: secret"
 local function resultsText()
     local results = ns.db and ns.db.debug.results or {}
@@ -121,6 +201,7 @@ ns.Checkbox(panel, "Debug checks", "Runs the checks by themselves when you targe
     function() return ns.db and ns.db.debug.on end,
     function(on)
         ns.db.debug.on = on
+        setTiming(on)
         if on then run(mapChecks) end
     end)
 ns.Label(panel, "Prints a line the first time a result is seen in a place, or when it changes there.",
@@ -128,6 +209,11 @@ ns.Label(panel, "Prints a line the first time a result is seen in a place, or wh
 ns.Button(panel, "Clear results", 120, function()
     ns.db.debug.results = {}
     ns.refresh(panel)
+end)
+ns.Button(panel, "Show performance", 160, function() ns.debug.report() end, "Memory and timing")
+ns.Button(panel, "Reset timing", 120, function()
+    wipe(timings)
+    since = ns.debug.timing and GetTime() or nil
 end)
 resultsTop = panel.y
 resultsLine = ns.Label(panel, "", "GameFontHighlightSmall")

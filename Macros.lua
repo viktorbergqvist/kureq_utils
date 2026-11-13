@@ -224,12 +224,11 @@ function M.delete(m)
     return true
 end
 
--- The action slots macro index is on, and putting macro index on slots. Every slot the client has: Forever's bars 6 to
--- 8 (MultiBar5-7) are pages 13-15, slots 145-180, past the 120 that loadouts cover.
+-- The action slots macro index is on, and putting macro index on slots. Every slot the client has (Forever's bars 6
+-- to 8 too: ns.loadouts.slots).
 local function barSlots(index)
     local slots = {}
-    local last = math.max(L.SLOTS, (MULTIBAR_7_ACTIONBAR_PAGE or 0) * (NUM_ACTIONBAR_BUTTONS or 12))
-    for slot = 1, last do
+    for _, slot in ipairs(L.slots()) do
         local kind, id = GetActionInfo(slot)
         if kind == "macro" and id == index then slots[#slots + 1] = slot end
     end
@@ -361,6 +360,7 @@ end
 local events = CreateFrame("Frame")
 events:RegisterEvent("UPDATE_MACROS")
 events:SetScript("OnEvent", function() if M.changed and ns.IsOn("macros") then M.changed() end end)
+ns.watch("Macros", events)
 
 ns.AddCommand("macro", "/ku macro - opens or closes the macros window", function() M.toggle() end, "macros")
 ns.commands.macros = ns.commands.macro -- the old name keeps working, unlisted

@@ -1356,7 +1356,22 @@ function refresh()
         refreshDetail()
     end
 end
-S.refresh = refresh
+-- Kills, loot and deaths redraw the open window at most once a second (user decision 2026-11-13): the first at once,
+-- the rest of that second together at its end. Clicks in the window draw at once.
+local lastDraw, drawQueued = nil, false
+S.refresh = function()
+    if drawQueued or not frame:IsShown() then return end
+    local wait = lastDraw and lastDraw + 1 - GetTime() or 0
+    if wait <= 0 then
+        lastDraw = GetTime()
+        return refresh()
+    end
+    drawQueued = true
+    C_Timer.After(wait, function()
+        drawQueued, lastDraw = false, GetTime()
+        refresh()
+    end)
+end
 frame:SetScript("OnShow", refresh)
 
 -- Resizing: the panes stretch on their anchors; this re-lays what is sized by the window (the tiles, the detail's

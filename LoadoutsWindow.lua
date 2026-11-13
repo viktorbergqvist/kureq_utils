@@ -204,8 +204,10 @@ summary:SetWidth(CONTENT_W)
 summary:SetWordWrap(true)
 frame.summary = summary
 
--- Bars: a row of 12 slots per bar, in the order Edit Mode numbers them; hover a slot for what it is
+-- Bars: a row of 12 slots per bar, in the order Edit Mode numbers them; hover a slot for what it is. Bars 6 to 8
+-- (pages 13-15) only where the client has them (Forever).
 local BARS = {{1, "Bar 1"}, {2, "Bar 1, page 2"}, {6, "Bar 2"}, {5, "Bar 3"}, {3, "Bar 4"}, {4, "Bar 5"},
+    {13, "Bar 6"}, {14, "Bar 7"}, {15, "Bar 8"},
     {7, "Stance bar 1"}, {8, "Stance bar 2"}, {9, "Stance bar 3"}, {10, "Stance bar 4"}}
 local barRows, icons = {}, {}
 for _, bar in ipairs(BARS) do
@@ -545,6 +547,7 @@ local function showBars(lo, editable)
         local any = false
         for slot = first + 1, first + 12 do any = any or lo.actions[slot] ~= nil end
         any = any or editable -- a saved loadout shows every bar, to drop things on
+        any = any and L.isSlot(first + 1)
         row:SetShown(any)
         for slot = first + 1, first + 12 do icons[slot].editable = editable end
         if any then
@@ -562,7 +565,7 @@ local function showBars(lo, editable)
                 end
                 b.icon:SetShown(a ~= nil)
                 b.changed, b.waiting, b.editable = p.changed[slot], p.waiting[slot], editable
-                b.ignored = lo.ignored and lo.ignored[slot] or nil
+                b.ignored = L.ignores(lo, slot) or nil
                 b:SetBackdropBorderColor(GOLD[1], GOLD[2], GOLD[3], b.changed and 1 or 0)
                 -- a spell you don't know yet would wait; an ignored slot isn't loaded
                 b.icon:SetDesaturated(b.waiting == true or b.ignored == true)

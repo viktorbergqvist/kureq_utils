@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.10 (2026-11-13)
+
+### Loadouts
+
+- Action bars 6 to 8 are saved and loaded too.
+- Loadouts saved before this leave bars 6 to 8 alone; save one again to include them.
+
+### Macros
+
+- Search the icon picker by spell, mount and item name, or by the icon's file name and kind (sword, potion, fire).
+- Hover any icon to see its name; a Spells / Items / All filter sorts them.
+- KU Ping's macro is now called KureqPing; it stays on your bars, with its history, and your loadouts follow.
+
+### Kill stats
+
+- The open window redraws at most once a second during fast pulls.
+
+### Performance
+
+- Smart macros read each item's tooltip once a session and skip your bags while none is ticked.
+- The kill XP line, the Professions guide's map pins and trainer marks, and the group warning do less work.
+- Debug page: Show performance prints memory and, while Debug checks are on, how long handlers took.
+
 ## v1.9 (2026-11-13)
 
 ### Macros

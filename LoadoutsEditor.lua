@@ -318,15 +318,15 @@ for slot, b in pairs(frame.icons) do
                     end)
                 end
                 -- ignored: loading leaves the slot (or the whole bar of 12) as it is
-                local ignored = lo.ignored or {}
-                root:CreateButton(ignored[slot] and "Stop ignoring this slot" or "Ignore this slot", function()
-                    L.setIgnored(lo, {slot}, not ignored[slot])
+                local ignored = L.ignores(lo, slot)
+                root:CreateButton(ignored and "Stop ignoring this slot" or "Ignore this slot", function()
+                    L.setIgnored(lo, {slot}, not ignored)
                     refresh()
                 end)
                 local first, bar, all = slot - (slot - 1) % 12, {}, true
                 for s = first, first + 11 do
                     bar[#bar + 1] = s
-                    all = all and ignored[s] == true
+                    all = all and L.ignores(lo, s)
                 end
                 root:CreateButton(all and "Stop ignoring this bar" or "Ignore this bar", function()
                     L.setIgnored(lo, bar, not all)
@@ -389,7 +389,8 @@ catcher:SetScript("OnKeyDown", function(_, key)
 end)
 -- the loadout's macros, and the bar buttons it puts something on
 local BUTTONS = {{1, "ACTIONBUTTON"}, {6, "MULTIACTIONBAR1BUTTON"}, {5, "MULTIACTIONBAR2BUTTON"},
-    {3, "MULTIACTIONBAR3BUTTON"}, {4, "MULTIACTIONBAR4BUTTON"}}
+    {3, "MULTIACTIONBAR3BUTTON"}, {4, "MULTIACTIONBAR4BUTTON"}, {13, "MULTIACTIONBAR5BUTTON"},
+    {14, "MULTIACTIONBAR6BUTTON"}, {15, "MULTIACTIONBAR7BUTTON"}}
 local addBinding = St.MenuButton(detail, 130, function() return "Add a binding" end, function(root)
     local lo = current()
     if not lo then return end
@@ -399,7 +400,8 @@ local addBinding = St.MenuButton(detail, 130, function() return "Add a binding" 
     end
     for _, bar in ipairs(BUTTONS) do
         for i = 1, 12 do
-            if lo.actions[(bar[1] - 1) * 12 + i] then
+            local slot = (bar[1] - 1) * 12 + i
+            if lo.actions[slot] and L.isSlot(slot) then
                 local command = bar[2] .. i
                 root:CreateButton(actionName(command), function() listen(command) end)
             end

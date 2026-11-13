@@ -49,8 +49,8 @@ function L.Dialog(owner, w, h)
     return d
 end
 
--- Your spellbook: {name = its tab, spells = {names}}, active spells only, each name once
-function L.spellbook()
+-- Your spellbook: {name = its tab, spells = {names}}, active spells only (passive ones too when withPassive), each name once
+function L.spellbook(withPassive)
     local tabs = {}
     local function add(list, seen, spell)
         if spell and not seen[spell] then
@@ -66,7 +66,7 @@ function L.spellbook()
                 local list, seen = {}, {}
                 for slot = line.itemIndexOffset + 1, line.itemIndexOffset + line.numSpellBookItems do
                     local item = C_SpellBook.GetSpellBookItemInfo(slot, Enum.SpellBookSpellBank.Player)
-                    if item and item.itemType == spellType and not item.isPassive then add(list, seen, item.name) end
+                    if item and item.itemType == spellType and (withPassive or not item.isPassive) then add(list, seen, item.name) end
                 end
                 if #list > 0 then tabs[#tabs + 1] = {name = line.name, spells = list} end
             end
@@ -76,7 +76,7 @@ function L.spellbook()
             local name, _, offset, n = GetSpellTabInfo(i)
             local list, seen = {}, {}
             for slot = offset + 1, offset + n do
-                if not IsPassiveSpell(slot, "spell") then add(list, seen, (GetSpellBookItemName(slot, "spell"))) end
+                if withPassive or not IsPassiveSpell(slot, "spell") then add(list, seen, (GetSpellBookItemName(slot, "spell"))) end
             end
             if #list > 0 then tabs[#tabs + 1] = {name = name, spells = list} end
         end
@@ -184,44 +184,181 @@ function L.MacroForm(parent, W, scope, note, codeH)
     return ed
 end
 
--- Icon picker: Blizzard's macro icons, a page at a time, over owner. d:Open() shows it; picking one hides it and calls
--- onPick(icon). d.cells and d.nextPage are for the tests.
-local iconList
+-- Icon picker: Blizzard's macro icons, a page at a time, over owner, with a search by name and a Spells / Items / All
+-- filter. The search finds your spells, mounts and items by name, then (from 2 letters on) every icon in the game by its
+-- file name and category words (Data/Icons.lua). d:Open() shows it; picking one hides it and calls onPick(icon).
+-- d.cells, d.nextPage, d.search and d.filters are for the tests.
+local gameIcons -- {spell = {...}, item = {...}, all = {...}}: the game's lists, all in the game's order
 local function allIcons()
-    if iconList then return iconList end
-    local raw = {}
-    for _, fill in ipairs({GetLooseMacroIcons or false, GetLooseMacroItemIcons or false, GetMacroIcons or false,
-        GetMacroItemIcons or false}) do
-        if fill then fill(raw) end
+    if gameIcons then return gameIcons end
+    gameIcons = {spell = {}, item = {}, all = {}}
+    for _, f in ipairs({{GetLooseMacroIcons, "spell"}, {GetLooseMacroItemIcons, "item"}, {GetMacroIcons, "spell"},
+        {GetMacroItemIcons, "item"}}) do
+        if f[1] then
+            local raw = {}
+            f[1](raw)
+            for _, t in ipairs(raw) do
+                local icon = tonumber(t) or t
+                table.insert(gameIcons[f[2]], icon)
+                table.insert(gameIcons.all, icon)
+            end
+        end
     end
-    iconList = {QUESTION_MARK}
-    for _, t in ipairs(raw) do iconList[#iconList + 1] = tonumber(t) or t end
-    return iconList
+    return gameIcons
 end
+
+-- The game's icon index (Data/Icons.lua, written by tools/update_icons.py), decoded on the first open into parallel
+-- lists: indexIcons[i] the icon, indexFiles[i] its file name, indexWords[i] its category words ("item, weapon"),
+-- indexUse[i] "I" (items use it), "S" (spells), "B" (both) or "" (neither); indexed: icon (its ID or its lowercase file
+-- name) -> i. Lines are "P<name>|<icon><use>|<word>..." in base 36, P the characters shared with the name before.
+local indexIcons, indexFiles, indexWords, indexUse, indexed
+local function loadIndex()
+    if indexIcons then return end
+    indexIcons, indexFiles, indexWords, indexUse, indexed = {}, {}, {}, {}, {}
+    local data, prev = ns.iconIndex, ""
+    if not data then return end
+    for line in data.icons:gmatch("[^\n]+") do
+        local rest, icon, refs = line:match("^([^|]*)|([^|]+)(.*)$")
+        prev = prev:sub(1, tonumber(rest:sub(1, 1), 36)) .. rest:sub(2)
+        local words = {}
+        for r in refs:gmatch("[^|]+") do words[#words + 1] = data.words[tonumber(r, 36)] end
+        local id, use = icon:match("^([%da-z]+)(%u?)$")
+        local n = #indexIcons + 1
+        indexIcons[n], indexFiles[n], indexWords[n], indexUse[n] = tonumber(id, 36), prev, table.concat(words, ", "), use
+        indexed[indexIcons[n]], indexed[prev] = n, indexed[prev] or n
+    end
+end
+-- The index entry of an icon given as a file ID or a texture path ("INV_Sword_04", "Interface\\Icons\\x.blp"), or nil
+local function indexOf(icon)
+    if type(icon) ~= "string" then return indexed[icon] end
+    return indexed[icon:lower():gsub("^.*[\\/]", ""):gsub("%.blp$", "")]
+end
+-- Whether index entry i is shown under filter "spell" or "item": what uses it, else the file name (inv_ is an item's)
+local function indexKind(i, filter)
+    local use = indexUse[i]
+    if use == "" then return (filter == "item") == (indexFiles[i]:sub(1, 4) == "inv_") end
+    return use == "B" or use == (filter == "item" and "I" or "S")
+end
+
+-- The icons that have names: {icon, name, lower, kind ("spell" or "item")} for your spells and mounts, and the items in
+-- your bags, bank and gear
+local function itemName(link) return link and link:match("%[(.-)%]") end
+function L.iconNames()
+    local list = {}
+    local function add(icon, name, kind)
+        if icon and name and name ~= "" then
+            list[#list + 1] = {icon = tonumber(icon) or icon, name = name, lower = name:lower(), kind = kind}
+        end
+    end
+    local texture = C_Spell and C_Spell.GetSpellTexture or GetSpellTexture
+    for _, tab in ipairs(L.spellbook(true)) do
+        for _, spell in ipairs(tab.spells) do add(texture(spell), spell, "spell") end
+    end
+    if C_MountJournal and C_MountJournal.GetMountIDs then
+        for _, id in ipairs(C_MountJournal.GetMountIDs()) do
+            local name, _, icon, _, _, _, _, _, _, _, collected = C_MountJournal.GetMountInfoByID(id)
+            if collected then add(icon, name, "spell") end
+        end
+    end
+    -- Every container the client names (Enum.BagIndex differs per client): bags, reagent bag, keyring, bank, bank bags
+    -- or tabs, the account bank. The bank reads empty until you've opened it this session.
+    local bags = {}
+    for _, bag in pairs(Enum.BagIndex) do bags[#bags + 1] = bag end
+    table.sort(bags) -- pairs has no order; sorted keeps the results in one order
+    for _, bag in ipairs(bags) do
+        for slot = 1, C_Container.GetContainerNumSlots(bag) do
+            local it = C_Container.GetContainerItemInfo(bag, slot)
+            if it then add(it.iconFileID, itemName(it.hyperlink), "item") end
+        end
+    end
+    for slot = 1, 19 do
+        add(GetInventoryItemTexture("player", slot), itemName(GetInventoryItemLink("player", slot)), "item")
+    end
+    return list
+end
+
+local FILTERS = {{"Spells", "spell"}, {"Items", "item"}, {"All", "all"}}
 function L.IconPicker(owner, onPick)
     local COLS, ROWS, CELL = 10, 5, 36
-    local d = L.Dialog(owner, COLS * CELL + 24, ROWS * CELL + 110)
+    local d = L.Dialog(owner, COLS * CELL + 24, ROWS * CELL + 140)
     d.title:SetText("Pick an icon")
+    d.text:ClearAllPoints()
+    d.text:SetPoint("TOPLEFT", 12, -66)
+    d.text:SetPoint("RIGHT", -12, 0)
     d.ok:Hide()
     d.cancel:SetText("Close")
-    local page = 1
+    local page, filter, query = 1, "all", ""
+    local index, byIcon = {}, {} -- L.iconNames(), made on Open; byIcon: icon -> its names
+    local INDEX_MIN = 2 -- one letter matches most of the game's icons: it searches only your names
     local cells = {}
+    local function list()
+        if query == "" then
+            local game = allIcons()[filter]
+            if filter == "item" then return game end
+            local l = {QUESTION_MARK}
+            for _, icon in ipairs(game) do l[#l + 1] = icon end
+            return l
+        end
+        local l, seen = {}, {}
+        for _, e in ipairs(index) do
+            if (filter == "all" or e.kind == filter) and not seen[e.icon] and e.lower:find(query, 1, true) then
+                seen[e.icon] = true
+                local i = indexOf(e.icon)
+                if i then seen[indexIcons[i]] = true end -- a path's icon isn't listed again by its ID
+                l[#l + 1] = e.icon
+            end
+        end
+        if #query < INDEX_MIN then return l end
+        for i, icon in ipairs(indexIcons) do
+            local file = indexFiles[i]
+            if not seen[icon] and (filter == "all" or indexKind(i, filter))
+                and (file:find(query, 1, true) or indexWords[i]:find(query, 1, true)) then
+                seen[icon] = true
+                l[#l + 1] = icon
+            end
+        end
+        return l
+    end
     local function showPage()
-        local list = allIcons()
-        local pages = math.max(1, math.ceil(#list / (COLS * ROWS)))
+        local q = (d.search:GetText() or ""):lower():match("^%s*(.-)%s*$")
+        if q ~= query then query, page = q, 1 end
+        local l = list()
+        local pages = math.max(1, math.ceil(#l / (COLS * ROWS)))
         page = math.min(math.max(page, 1), pages)
         for n, b in ipairs(cells) do
-            local icon = list[(page - 1) * COLS * ROWS + n]
+            local icon = l[(page - 1) * COLS * ROWS + n]
             b.value = icon
             b.texture:SetTexture(icon and L.iconPath(icon))
             b:SetShown(icon ~= nil)
         end
-        d.text:SetText(("Page %d of %d. A question mark shows the spell the macro casts."):format(page, pages))
+        for _, t in ipairs(d.filters) do t:Set(t.name, t.kind == filter) end
+        if query == "" then
+            d.text:SetText(("Page %d of %d. A question mark shows the spell the macro casts."):format(page, pages))
+        elseif #l == 0 then
+            d.text:SetText(("No icon matches \"%s\": search your spells, mounts and items, or an icon's file name or kind (sword, fire)."):format(query))
+        else
+            d.text:SetText(("%d %s. Page %d of %d."):format(#l, #l == 1 and "match" or "matches", page, pages))
+        end
+    end
+    d.search = CreateFrame("EditBox", nil, d, "SearchBoxTemplate")
+    d.search:SetPoint("TOPLEFT", 18, -38)
+    d.search:SetSize(170, 20)
+    d.search:SetAutoFocus(false)
+    d.search:HookScript("OnTextChanged", function() showPage() end)
+    d.filters = {}
+    local right -- the tabs line up from the right edge: Spells, Items, All
+    for i = #FILTERS, 1, -1 do
+        local t = St.TextTab(d, function(self) filter = self.kind; page = 1; showPage() end)
+        t.name, t.kind = FILTERS[i][1], FILTERS[i][2]
+        t:Set(t.name, t.kind == filter)
+        if right then t:SetPoint("RIGHT", right, "LEFT") else t:SetPoint("TOPRIGHT", -8, -36) end
+        right = t
+        d.filters[i] = t
     end
     for n = 1, COLS * ROWS do
         local b = CreateFrame("Button", nil, d)
         b:SetSize(CELL - 4, CELL - 4)
-        b:SetPoint("TOPLEFT", 12 + ((n - 1) % COLS) * CELL, -58 - math.floor((n - 1) / COLS) * CELL)
+        b:SetPoint("TOPLEFT", 12 + ((n - 1) % COLS) * CELL, -88 - math.floor((n - 1) / COLS) * CELL)
         b.texture = b:CreateTexture(nil, "ARTWORK")
         b.texture:SetAllPoints()
         local hl = b:CreateTexture(nil, "HIGHLIGHT")
@@ -231,6 +368,16 @@ function L.IconPicker(owner, onPick)
             d:Hide()
             onPick(self.value)
         end)
+        b:SetScript("OnEnter", function(self)
+            -- your names first, then the icon's file name and category words
+            local names, i = byIcon[self.value], indexOf(self.value)
+            if not names and not i then return end
+            local lines = names and {unpack(names, 2)} or {}
+            if names and i then lines[#lines + 1] = indexFiles[i] end
+            if i and indexWords[i] ~= "" then lines[#lines + 1] = indexWords[i] end
+            St.Tooltip(self, names and names[1] or indexFiles[i], lines)
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
         cells[n] = b
     end
     local prevPage = L.Button(d, "Previous", 90)
@@ -241,6 +388,15 @@ function L.IconPicker(owner, onPick)
     d.nextPage:SetScript("OnClick", function() page = page + 1; showPage() end)
     d.cells = cells
     function d.Open()
+        loadIndex()
+        index, byIcon = L.iconNames(), {} -- once per open, so typing only filters
+        local seen = {}
+        for _, e in ipairs(index) do
+            byIcon[e.icon] = byIcon[e.icon] or {}
+            if not seen[e.icon .. "\0" .. e.name] then table.insert(byIcon[e.icon], e.name) end
+            seen[e.icon .. "\0" .. e.name] = true
+        end
+        d.search:SetText("")
         showPage()
         d:Show()
     end

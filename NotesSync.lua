@@ -436,6 +436,7 @@ listener:SetScript("OnEvent", function(_, _, prefix, text, channel, sender)
     local rec = parse(body)
     if rec then take(rec, skey) end
 end)
+ns.watch("Guild notes", listener)
 
 -- Starting: once per guild after login, and when sharing or the module turns on --------------------------------------
 local started -- the guild key sharing started for

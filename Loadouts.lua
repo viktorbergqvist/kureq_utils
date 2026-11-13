@@ -12,7 +12,26 @@ local L = {}
 ns.loadouts = L
 ns.defaults.loadouts = {}
 
-L.SLOTS = 120 -- every action slot: the six bars and the stance / form bars
+L.SLOTS = 120 -- the action slots every client has: the six bars and the stance / form bars
+-- Forever's bars 6 to 8 (MultiBar5-7) are pages 13-15, slots 145-180; Classic Era has no such bars. Slots 121-144
+-- hold no bar. L.MAX_SLOT caps a shared loadout's slots on any client.
+L.FIRST_EXTRA, L.MAX_SLOT = 145, 180
+function L.maxSlot() return math.max(L.SLOTS, (MULTIBAR_7_ACTIONBAR_PAGE or 0) * (NUM_ACTIONBAR_BUTTONS or 12)) end
+function L.isSlot(slot)
+    return type(slot) == "number" and slot >= 1 and (slot <= L.SLOTS or slot >= L.FIRST_EXTRA and slot <= L.maxSlot())
+end
+-- Every action slot this client has, in order
+function L.slots()
+    local list = {}
+    for slot = 1, L.SLOTS do list[slot] = slot end
+    for slot = L.FIRST_EXTRA, L.maxSlot() do list[#list + 1] = slot end
+    return list
+end
+-- Whether loading lo leaves slot as it is: an ignored slot, or one past the slots lo was saved with (lo.lastSlot,
+-- 120 when unset): a loadout saved on Classic Era or before bars 6 to 8 were kept has nothing for them, and leaves them
+L.UNSAVED = "unsaved" -- lo.ignored[slot]: not saved (an older loadout's bars 6 to 8), not ignored by you
+local UNSAVED = L.UNSAVED
+function L.ignores(lo, slot) return (lo.ignored and lo.ignored[slot]) ~= nil or slot > (lo.lastSlot or L.SLOTS) end
 local ACCOUNT_MACROS = MAX_ACCOUNT_MACROS or 120 -- character macros come after the general ones
 local CHARACTER_MACROS = MAX_CHARACTER_MACROS or 18
 -- interface settings: CVars in the Game and Combat categories, not graphics, sound, network or debug ones
@@ -106,7 +125,7 @@ function L.capture(withAccount)
     local lo = {actions = {}, macros = {}, bindings = {}, cvars = {}, created = time()}
     lo.className, lo.class = UnitClass("player")
     lo.from = ns.notes and ns.notes.unitName("player") or UnitName("player")
-    for slot = 1, L.SLOTS do
+    for _, slot in ipairs(L.slots()) do
         local kind, id = GetActionInfo(slot)
         if kind == "spell" then
             lo.actions[slot] = {type = "spell", id = id, name = (L.spellInfo(id))}
@@ -134,6 +153,7 @@ function L.capture(withAccount)
         if value ~= default then lo.cvars[name] = value end
     end
     if GetActionBarToggles then lo.bars = {GetActionBarToggles()} end
+    if L.maxSlot() > L.SLOTS then lo.lastSlot = L.maxSlot() end
     return lo
 end
 
@@ -151,7 +171,11 @@ function L.save(name, id) -- a new loadout, or id's replaced; returns its id
     local db = ns.db.loadouts
     if id and db.list[id] then
         local old = db.list[id]
-        lo.created, lo.anyClass, lo.ignored = old.created, old.anyClass, old.ignored -- what you set on it stays
+        lo.created, lo.anyClass, lo.ignored = old.created, old.anyClass, copy(old.ignored) -- what you set on it stays
+        for slot, on in pairs(lo.ignored or {}) do -- saved now
+            if on == UNSAVED and slot <= (lo.lastSlot or L.SLOTS) then lo.ignored[slot] = nil end
+        end
+        if lo.ignored and not next(lo.ignored) then lo.ignored = nil end
         lo.rules = old.rules
         lo.updated = time()
     else
@@ -259,13 +283,13 @@ function L.apply(lo, parts, characterSet)
         end
     end
     if parts.actions then
-        local pending, ignored = {}, lo.ignored or {}
+        local pending = {}
         for slot, name in pairs(L.pending() or {}) do -- an ignored slot's waiting spell keeps waiting
-            if ignored[slot] then pending[slot] = name end
+            if L.ignores(lo, slot) then pending[slot] = name end
         end
-        for slot = 1, L.SLOTS do
+        for _, slot in ipairs(L.slots()) do
             local a = lo.actions[slot]
-            if ignored[slot] then -- never touched
+            if L.ignores(lo, slot) then -- never touched
             elseif lo.backup and unplaceable(slot) then -- left as it is
             elseif not a then
                 clearSlot(slot)
@@ -301,7 +325,7 @@ function L.apply(lo, parts, characterSet)
             end
         end
         for slot, name in pairs(lo.pending or {}) do -- a backup's spells that were still waiting, if the slot's free
-            if not (ignored[slot] or GetActionInfo(slot)) then pending[slot] = name end
+            if not (L.ignores(lo, slot) or GetActionInfo(slot)) then pending[slot] = name end
         end
         ns.db.loadouts.pending[charKey()] = next(pending) and pending or nil
         if lo.pending then L.fillPending() end -- a restored spell may have been learned since
@@ -365,7 +389,10 @@ function L.load(lo, parts, characterSet)
     if full then return nil, full end
     local backup, list = L.capture(true), L.backups()
     backup.name, backup.backup, backup.parts = "Before " .. lo.name, true, {}
-    backup.ignored = copy(lo.ignored) -- the slots this load leaves, a restore leaves too
+    -- the slots this load leaves, a restore leaves too: past what either the backup or lo holds
+    backup.ignored = copy(lo.ignored)
+    backup.lastSlot = math.min(backup.lastSlot or L.SLOTS, lo.lastSlot or L.SLOTS)
+    if backup.lastSlot == L.SLOTS then backup.lastSlot = nil end
     backup.bindingSet = GetCurrentBindingSet and GetCurrentBindingSet() -- a restore puts the set back too
     backup.switchedSet = characterSet and parts.bindings and backup.bindingSet == ACCOUNT_SET or nil
     for part, on in pairs(parts) do backup.parts[part] = on end -- a restore puts back only what this load changes
@@ -402,12 +429,11 @@ local function nowHolds(slot)
 end
 function L.preview(lo)
     local p = {changed = {}, waiting = {}, changes = 0, waits = 0, ignores = 0}
-    local ignored = lo.ignored or {}
     local macros = {} -- loading the macros makes these
     for _, m in ipairs(lo.macros) do macros[m.name] = true end
-    for slot = 1, L.SLOTS do
+    for _, slot in ipairs(L.slots()) do
         local a, holds = lo.actions[slot], nil
-        if ignored[slot] then
+        if L.ignores(lo, slot) then
             holds, p.ignores = nowHolds(slot), p.ignores + 1 -- loading leaves it
         elseif a and a.type == "spell" then
             local _, id = L.spellInfo(a.name or a.id)
@@ -502,6 +528,42 @@ local function moveMacroRefs(lo, old, new)
     if keys and new then lo.bindings["MACRO " .. new] = keys end
 end
 
+-- An account macro renamed outside the editor (KU Ping's KureqPingCustom): every saved loadout and backup, and the
+-- editor's copies to revert to, point to it by its new name. A loadout keeping a character macro of the old name
+-- leaves its slots and bindings to that one; one that already names new anywhere (a macro of the player's that had
+-- that name) is left as it is, its old references then as any to a deleted macro.
+function L.renameAccountMacro(old, new)
+    local function holds(lo, name)
+        for _, list in ipairs({lo.macros or {}, lo.madeMacros or {}}) do
+            for _, m in ipairs(list) do if m.name == name then return true end end
+        end
+        for _, a in pairs(lo.actions or {}) do if a.type == "macro" and a.name == name then return true end end
+        if lo.bindings and lo.bindings["MACRO " .. name] then return true end
+        for _, command in ipairs(lo.boundMacros or {}) do if command == "MACRO " .. name then return true end end
+    end
+    local function each(lo)
+        if type(lo) ~= "table" or holds(lo, new) then return end
+        local charHas
+        for _, m in ipairs(lo.macros or {}) do
+            if m.name == old then if m.account then m.name = new else charHas = true end end
+        end
+        for _, m in ipairs(lo.madeMacros or {}) do -- a restore deletes these
+            if m.account and m.name == old then m.name = new end
+        end
+        if charHas then return end
+        if lo.actions and lo.bindings then moveMacroRefs(lo, old, new) end
+        for i, command in ipairs(lo.boundMacros or {}) do
+            if command == "MACRO " .. old then lo.boundMacros[i] = "MACRO " .. new end
+        end
+    end
+    local db = ns.db.loadouts
+    for _, lo in pairs(db.list or {}) do each(lo) end
+    for _, list in pairs(db.backups or {}) do
+        for _, lo in ipairs(type(list) == "table" and list or {}) do each(lo) end
+    end
+    for _, lo in pairs(before) do each(lo) end
+end
+
 -- Changes macro i (fields: name, icon, body, account, kind, options; options = false drops them). Renaming moves
 -- every slot and binding that pointed to it. Returns true, or nil and why not.
 function L.setMacro(lo, i, fields)
@@ -537,15 +599,33 @@ function L.moveMacro(lo, i, step)
     return j
 end
 
+-- Editing a slot past the ones lo was saved with (bars 6 to 8 on an older loadout) takes them in as ignored slots
+-- marked UNSAVED, so loading still leaves the rest of them. Each edited slot drops its mark (a slot you ignored stays).
+local function widen(lo, slot)
+    if slot > (lo.lastSlot or L.SLOTS) then
+        lo.ignored = lo.ignored or {}
+        for s = math.max(L.FIRST_EXTRA, (lo.lastSlot or 0) + 1), L.maxSlot() do
+            lo.ignored[s] = lo.ignored[s] or UNSAVED
+        end
+        lo.lastSlot = L.maxSlot()
+    end
+    if lo.ignored and lo.ignored[slot] == UNSAVED then
+        lo.ignored[slot] = nil -- an empty table stays: L.setIgnored is still using it
+    end
+end
+
 -- Bars: an action ({type, id, name}) or nil on a slot, and two slots swapped
 function L.setSlot(lo, slot, action)
-    if not (type(slot) == "number" and slot >= 1 and slot <= L.SLOTS) then return end
+    if not L.isSlot(slot) then return end
     track(lo)
+    widen(lo, slot)
     lo.actions[slot] = action
 end
 function L.swapSlots(lo, a, b)
     if a == b then return end
     track(lo)
+    widen(lo, a)
+    widen(lo, b)
     lo.actions[a], lo.actions[b] = lo.actions[b], lo.actions[a]
 end
 
@@ -594,7 +674,10 @@ function L.setIgnored(lo, slots, on)
     track(lo)
     lo.ignored = lo.ignored or {}
     for _, slot in ipairs(slots) do
-        if type(slot) == "number" and slot >= 1 and slot <= L.SLOTS then lo.ignored[slot] = on or nil end
+        if L.isSlot(slot) then
+            if not on then widen(lo, slot) end
+            lo.ignored[slot] = on or nil
+        end
     end
     if not next(lo.ignored) then lo.ignored = nil end
 end
@@ -825,7 +908,7 @@ function L.export(lo)
     local out = {}
     encode({name = lo.name, class = lo.class, className = lo.className, from = lo.from, created = lo.created,
         actions = lo.actions, macros = lo.macros, bindings = lo.bindings, cvars = lo.cvars, bars = lo.bars,
-        anyClass = lo.anyClass, ignored = lo.ignored, rules = lo.rules}, out)
+        anyClass = lo.anyClass, ignored = lo.ignored, rules = lo.rules, lastSlot = lo.lastSlot}, out)
     return (needsKU3(lo) and PREFIX3 or needsKU2(lo) and PREFIX2 or PREFIX) .. table.concat(out)
 end
 
@@ -872,6 +955,8 @@ end
 -- Only the fields a loadout has, of the right types and sizes; nil when anything is off
 local function str(v, max) return type(v) == "string" and #v <= max end
 local function int(v, lo, hi) return type(v) == "number" and v == math.floor(v) and v >= lo and v <= hi end
+-- a slot of bars 1 to 5, the stance bars or bars 6 to 8, whether or not this client has them
+local function barSlot(v) return int(v, 1, L.MAX_SLOT) and (v <= L.SLOTS or v >= L.FIRST_EXTRA) end
 local function size(t, max)
     local n = 0
     for _ in pairs(t) do n = n + 1 end
@@ -909,11 +994,11 @@ local function check(t)
     if t.anyClass ~= nil and type(t.anyClass) ~= "boolean" then return nil end
     lo.anyClass = t.anyClass or nil
     if t.ignored ~= nil then
-        if type(t.ignored) ~= "table" or not size(t.ignored, L.SLOTS) then return nil end
+        if type(t.ignored) ~= "table" or not size(t.ignored, L.MAX_SLOT) then return nil end
         lo.ignored = {}
         for slot, on in pairs(t.ignored) do
-            if not (int(slot, 1, L.SLOTS) and on == true) then return nil end
-            lo.ignored[slot] = true
+            if not (barSlot(slot) and (on == true or on == UNSAVED)) then return nil end
+            lo.ignored[slot] = on
         end
         if not next(lo.ignored) then lo.ignored = nil end
     end
@@ -936,9 +1021,12 @@ local function check(t)
         end
         if #lo.rules == 0 then lo.rules = nil end
     end
-    if not size(t.actions, L.SLOTS) then return nil end
+    -- bars 6 to 8 come in on any client; one without them never loads them
+    if t.lastSlot ~= nil and not int(t.lastSlot, L.SLOTS, L.MAX_SLOT) then return nil end
+    lo.lastSlot = t.lastSlot
+    if not size(t.actions, L.MAX_SLOT) then return nil end
     for slot, a in pairs(t.actions) do
-        if not (int(slot, 1, L.SLOTS) and type(a) == "table" and str(a.type, 32) and a.type:find("^%a+$")
+        if not (barSlot(slot) and type(a) == "table" and str(a.type, 32) and a.type:find("^%a+$")
             and (a.id == nil or int(a.id, 0, 2 ^ 31)) and (a.name == nil or str(a.name, 255))) then return nil end
         if (a.type == "spell" and not (a.name or a.id)) or (a.type == "macro" and not a.name)
             or (a.type == "item" and not a.id) then return nil end
@@ -1308,6 +1396,7 @@ events:SetScript("OnEvent", function(_, event, arg)
     L.onSpells()
     L.fillPending()
 end)
+ns.watch("Loadouts", events)
 -- on again: spells learned while off go on now (in combat fillPending waits for it to end)
 ns.OnModuleChange("loadouts", function(on)
     if on then return L.fillPending() end

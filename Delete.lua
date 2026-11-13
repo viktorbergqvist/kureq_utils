@@ -881,6 +881,7 @@ f:SetScript("OnEvent", function(_, event, a1, a2)
     local message = type(a1) == "string" and a1 or a2 -- (errorType, message) here; older clients pass only the message
     if message == ERR_INV_FULL then bagsFull() end
 end)
+ns.watch("Delete items", f)
 
 -- New rows pick up the current notes: the scrolling loot window signals each row it fills; the old one updates
 -- LootButton1-4 through LootFrame_UpdateButton.

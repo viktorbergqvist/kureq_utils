@@ -606,6 +606,15 @@ do
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
+-- What the Debug page times (Debug.lua) while Debug checks are on: an event frame's OnEvent (no key), or the function
+-- target[key]. Nothing is wrapped while they're off.
+ns.watched = {}
+function ns.watch(name, target, key)
+    local w = {name = name, target = target, key = key}
+    ns.watched[#ns.watched + 1] = w
+    if ns.debug and ns.debug.timing then ns.debug.wrap(w) end
+end
+
 local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
 f:SetScript("OnEvent", function(self, _, name)
@@ -641,7 +650,7 @@ KureqUtils = {
     WriteMacro = function(name, text) return ns.writeMacro(name, text) end,
     -- fn() runs after a ping macro setting changes, so companions can rebuild their macros
     OnChange = function(fn) tinsert(ns.listeners, fn) end,
-    -- KureqPingCustom targets these names (lowest priority first), shown as label, until another target is set
+    -- KureqPing (KU Ping) targets these names (lowest priority first), shown as label, until another target is set
     SetCustomTargets = function(label, names) return ns.setCustomNames(label, names) end,
     -- the nearby alert watches these mob names under this source name (replacing its last list)
     SetWatchList = function(source, names) ns.setWatch(source, names) end,
@@ -661,4 +670,6 @@ KureqUtils = {
     Checkbox = ns.Checkbox,
     Header = ns.Header,
     Label = ns.Label,
+    -- Watch(name, frame) or Watch(name, table, key): timed on the Debug page while Debug checks are on
+    Watch = function(name, target, key) ns.watch(name, target, key) end,
 }

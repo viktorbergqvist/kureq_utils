@@ -241,6 +241,8 @@ Make and edit your character and account macros in a window of their own (`/ku m
   writes it to the game (it asks first if the macro changed in the game meanwhile), **Revert** goes back to the game's
   copy. Drag its icon to an action bar, **Add to loadout** copies it into a saved loadout (asking before it replaces
   one of the same name), and **Delete macro** asks first.
+- **Icons:** the icon picker searches your spells, mounts and items by name, and every icon in the game by its file
+  name or kind (sword, potion, fire). Hover an icon to see what it is.
 
 ![Macros: suggestions as you type](https://raw.githubusercontent.com/viktorbergqvist/kureq_utils/main/media/screenshots/macros-completions.png)
 
@@ -252,9 +254,10 @@ until you can save it. Two macros with the same name aren't changed here: rename
 
 ### KU Ping and nearby alert
 
-**KU Ping**, a smart macro, keeps the account macro **KureqPingCustom** on a mob to target and ping. Tick it in the
+**KU Ping**, a smart macro, keeps the account macro **KureqPing** on a mob to target and ping. Tick it in the
 **Smart macros** tab of the Macros window (if you used the old Ping macro module, it's ticked for you and keeps
-your settings). Put the macro on your action bar, then:
+your settings; its old macro, KureqPingCustom, is renamed KureqPing and stays on your bars). Put the macro on your
+action bar, then:
 
 - `/ku ping Defias Pillager` makes it target that mob.
 - `/ku ping` with a quest link, or **Alt-click** a quest in the quest log or Questie's tracker, makes it target that
