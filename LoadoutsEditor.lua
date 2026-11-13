@@ -134,8 +134,9 @@ end)
 -- Delete and Revert ask first; what they act on is kept in a local
 local asking
 local function confirm(which, text, fn)
+    local target = asking -- each popup keeps its own, so another one asking meanwhile can't swap it
     StaticPopupDialogs[which] = {text = text, button1 = YES or "Yes", button2 = NO or "No",
-        OnAccept = function() if asking and ns.IsOn("loadouts") then fn(asking) end end,
+        OnAccept = function() if target and ns.IsOn("loadouts") then fn(target) end end,
         timeout = 0, whileDead = true, hideOnEscape = true}
     StaticPopup_Show(which)
 end
@@ -311,23 +312,25 @@ for slot, b in pairs(frame.icons) do
                         refresh()
                     end)
                 end
-                if lo.actions[slot] then
-                    root:CreateButton("Clear", function()
-                        L.setSlot(lo, slot, nil)
-                        refresh()
-                    end)
-                end
-                -- ignored: loading leaves the slot (or the whole bar of 12) as it is
-                local ignored = L.ignores(lo, slot)
-                root:CreateButton(ignored and "Stop ignoring this slot" or "Ignore this slot", function()
-                    L.setIgnored(lo, {slot}, not ignored)
-                    refresh()
-                end)
+                -- cleared: loads as empty; ignored: loading leaves the slot (or the whole bar of 12) as it is
                 local first, bar, all = slot - (slot - 1) % 12, {}, true
                 for s = first, first + 11 do
                     bar[#bar + 1] = s
                     all = all and L.ignores(lo, s)
                 end
+                root:CreateButton("Clear this slot", function()
+                    L.clearSlots(lo, {slot})
+                    refresh()
+                end)
+                root:CreateButton("Clear this bar", function()
+                    L.clearSlots(lo, bar)
+                    refresh()
+                end)
+                local ignored = L.ignores(lo, slot)
+                root:CreateButton(ignored and "Stop ignoring this slot" or "Ignore this slot", function()
+                    L.setIgnored(lo, {slot}, not ignored)
+                    refresh()
+                end)
                 root:CreateButton(all and "Stop ignoring this bar" or "Ignore this bar", function()
                     L.setIgnored(lo, bar, not all)
                     refresh()
@@ -515,7 +518,7 @@ local function macroSummary(lo)
             L.MACRO_CAPS.account)
 end
 
-function U.decorate(tab, lo, isBackup, height)
+local function decorateTab(tab, lo, isBackup, height)
     local editable = not isBackup
     if lo ~= shownLo or tab ~= shownTab then
         commitPending()
@@ -567,6 +570,53 @@ function U.decorate(tab, lo, isBackup, height)
     return form:GetHeight()
 end
 
+-- Each part's row over its tab: "Load these" (off: Load and Update from current skip it) and Clear all, which asks
+local PART = {bars = "actions", macros = "macros", bindings = "bindings", cvars = "cvars"}
+local CLEAR_ASK = {actions = "Empty every bar slot in %s?", macros = "Delete every macro in %s? Slots and keys using "
+    .. "them are cleared too.", bindings = "Clear every key binding in %s?", cvars = "Take every Blizzard setting out of %s?"}
+local PART_H = 32
+local partRow = CreateFrame("Frame", nil, detail)
+partRow:SetPoint("TOPLEFT", detail, "TOPLEFT", 12, -88) -- over the content, which moves down under it
+partRow:SetPoint("RIGHT", detail, "RIGHT", -12, 0)
+partRow:SetHeight(PART_H)
+partRow:Hide()
+local partBox = St.Checkbox(partRow, "Load these")
+partBox:SetPoint("LEFT", -4, 0)
+local clearAll = Button(partRow, "Clear all", 90)
+clearAll:SetPoint("RIGHT")
+frame.partRow, frame.partBox, frame.clearAllButton = partRow, partBox, clearAll
+partBox:SetScript("OnClick", function(self)
+    local lo = current()
+    if lo and PART[shownTab] then L.setPartOn(lo, PART[shownTab], self:GetChecked() and true or false) end
+    refresh()
+end)
+clearAll:SetScript("OnClick", function()
+    local lo, part = current(), PART[shownTab]
+    if not (lo and part) then return end
+    asking = {lo = lo, part = part}
+    confirm("KUREQUTILS_CLEAR_PART", CLEAR_ASK[part]:format(lo.name) .. " Revert changes undoes it.", function(a)
+        L.clearPart(a.lo, a.part)
+        say(("Cleared the %s of %s."):format(L.PART_NAMES[a.part], a.lo.name))
+        refresh()
+    end)
+end)
+local function decoratePart(tab, lo, isBackup)
+    local part = PART[tab]
+    local shown = lo ~= nil and not isBackup and part ~= nil and (tab ~= "macros" or view == "list")
+    partRow:SetShown(shown)
+    U.contentScroll:SetPoint("TOPLEFT", 12, shown and -(90 + PART_H) or -90)
+    if not shown then return end
+    partBox:SetChecked(L.partOn(lo, part))
+    if not L.partOn(lo, part) then
+        summary:SetText("|cffff8040Off: Load and Update from current skip these.|r " .. summary:GetText())
+    end
+end
+function U.decorate(tab, lo, isBackup, height)
+    height = decorateTab(tab, lo, isBackup, height)
+    decoratePart(tab, lo, isBackup)
+    return height
+end
+
 frame:HookScript("OnHide", function()
     L.endEdits()
     stopListening()
@@ -577,5 +627,5 @@ ns.OnModuleChange("loadouts", function(on)
     if on then return end
     stopListening()
     iconDialog:Hide()
-    for _, which in ipairs({"KUREQUTILS_DELETE_MACRO", "KUREQUTILS_REVERT_LOADOUT"}) do StaticPopup_Hide(which) end
+    for _, which in ipairs({"KUREQUTILS_DELETE_MACRO", "KUREQUTILS_REVERT_LOADOUT", "KUREQUTILS_CLEAR_PART"}) do StaticPopup_Hide(which) end
 end)

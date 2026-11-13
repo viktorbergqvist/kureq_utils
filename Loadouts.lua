@@ -6,7 +6,7 @@
 -- what you had as a backup for this character, and a loadout can be shared as a line of text.
 local _, ns = ...
 ns.AddModule("loadouts", "Loadouts",
-    "Save your action bars, macros, key bindings and settings, and load them on another character.")
+    "Save your action bars, macros, key bindings and Blizzard settings, and load them on another character.")
 local tinsert = table.insert
 local L = {}
 ns.loadouts = L
@@ -165,25 +165,46 @@ function L.counts(lo)
     return actions, #lo.macros, bindings, cvars
 end
 
-function L.save(name, id) -- a new loadout, or id's replaced; returns its id
+-- A new loadout, or id's replaced (Update from current); returns its id and, on a replace, how many of this client's
+-- slots it left as they were: ignored ones, and ones the old loadout wasn't saved with (still not saved after).
+-- Slots this client hasn't got (bars 6 to 8 on Classic Era) keep what the old loadout had too.
+function L.save(name, id)
     local lo = L.capture()
     lo.name = name
     local db = ns.db.loadouts
+    local kept
     if id and db.list[id] then
         local old = db.list[id]
         lo.created, lo.anyClass, lo.ignored = old.created, old.anyClass, copy(old.ignored) -- what you set on it stays
-        for slot, on in pairs(lo.ignored or {}) do -- saved now
-            if on == UNSAVED and slot <= (lo.lastSlot or L.SLOTS) then lo.ignored[slot] = nil end
+        local seen, oldLast = lo.lastSlot or L.SLOTS, old.lastSlot or L.SLOTS
+        for s = math.max(L.FIRST_EXTRA, oldLast + 1), seen do
+            lo.ignored = lo.ignored or {}
+            lo.ignored[s] = lo.ignored[s] or UNSAVED
         end
-        if lo.ignored and not next(lo.ignored) then lo.ignored = nil end
+        lo.lastSlot = math.max(seen, oldLast)
+        if lo.lastSlot == L.SLOTS then lo.lastSlot = nil end
+        kept = 0
+        for slot = 1, L.MAX_SLOT do
+            local ignored = L.ignores(old, slot)
+            if ignored or slot > seen then lo.actions[slot] = copy(old.actions[slot]) end
+            if ignored and L.isSlot(slot) then kept = kept + 1 end
+        end
         lo.rules = old.rules
+        lo.off = copy(old.off) -- a part that's off stays as it was
+        if lo.off and lo.off.actions then
+            lo.actions, lo.lastSlot, lo.ignored, kept = copy(old.actions), old.lastSlot, copy(old.ignored), 0
+        end
+        for _, part in ipairs({"macros", "bindings", "cvars"}) do
+            if lo.off and lo.off[part] then lo[part] = copy(old[part]) end
+        end
+        if lo.off and lo.off.cvars then lo.bars = copy(old.bars) end -- bar toggles load with the Blizzard settings
         lo.updated = time()
     else
         id = db.nextId
         db.nextId = id + 1
     end
     db.list[id] = lo
-    return id
+    return id, kept
 end
 
 -- A full copy of lo (a saved loadout or a backup) as a new saved loadout named "<name> (copy)", a number added if
@@ -385,6 +406,12 @@ end
 function L.load(lo, parts, characterSet)
     if InCombatLockdown() then return nil, COMBAT end
     parts = parts or L.ALL
+    if lo.off and not lo.backup then -- parts turned off in the loadout are skipped
+        local on = {}
+        for part, v in pairs(parts) do on[part] = v and not lo.off[part] or nil end
+        if not next(on) then return nil, "the parts you picked are off in this loadout" end
+        parts = on
+    end
     local full = parts.macros and L.macroRoom(lo)
     if full then return nil, full end
     local backup, list = L.capture(true), L.backups()
@@ -411,6 +438,7 @@ function L.load(lo, parts, characterSet)
     for i = #list, L.BACKUPS + 1, -1 do list[i] = nil end
     local report, why = L.apply(lo, parts, characterSet)
     if report then -- what a restore must undo besides putting back what was there
+        report.parts = parts
         backup.madeMacros = report.madeMacros
         backup.boundMacros = {}
         for command in pairs(parts.bindings and lo.bindings or {}) do
@@ -429,8 +457,8 @@ local function nowHolds(slot)
 end
 function L.preview(lo)
     local p = {changed = {}, waiting = {}, changes = 0, waits = 0, ignores = 0}
-    local macros = {} -- loading the macros makes these
-    for _, m in ipairs(lo.macros) do macros[m.name] = true end
+    local macros = {} -- loading the macros makes these (none while its Macros are off: a missing one isn't placed)
+    for _, m in ipairs(L.partOn(lo, "macros") and lo.macros or {}) do macros[m.name] = true end
     for _, slot in ipairs(L.slots()) do
         local a, holds = lo.actions[slot], nil
         if L.ignores(lo, slot) then
@@ -621,6 +649,15 @@ function L.setSlot(lo, slot, action)
     widen(lo, slot)
     lo.actions[slot] = action
 end
+-- Clear: the slots load as empty; an ignored slot (or one not saved) stays so, holding nothing
+function L.clearSlots(lo, slots)
+    for _, slot in ipairs(slots) do
+        if lo.actions[slot] then
+            track(lo) -- only a real change counts as an edit
+            lo.actions[slot] = nil
+        end
+    end
+end
 function L.swapSlots(lo, a, b)
     if a == b then return end
     track(lo)
@@ -669,6 +706,27 @@ function L.unbind(lo, command, key)
     end
 end
 
+-- Parts: lo.off[part] = true keeps a part (actions, macros, bindings, cvars) in the loadout but Load and Update from
+-- current skip it. Absent means on, so older loadouts and imports load everything.
+function L.partOn(lo, part) return not (lo.off and lo.off[part]) end
+function L.setPartOn(lo, part, on)
+    if L.partOn(lo, part) == on or not L.ALL[part] then return end
+    track(lo)
+    lo.off = lo.off or {}
+    lo.off[part] = not on or nil
+    if not next(lo.off) then lo.off = nil end
+end
+-- Clear all of a part; deleting the macros clears the slots and keys using them, as deleting one does
+function L.clearPart(lo, part)
+    if part == "macros" then
+        while #lo.macros > 0 do L.deleteMacro(lo, #lo.macros) end
+    elseif L.ALL[part] and (next(lo[part]) or part == "cvars" and lo.bars) then
+        track(lo)
+        lo[part] = {}
+        if part == "cvars" then lo.bars = nil end -- the bar toggles load with the Blizzard settings
+    end
+end
+
 -- Ignored slots: loading never touches them. on (true or false) for each slot in slots.
 function L.setIgnored(lo, slots, on)
     track(lo)
@@ -693,8 +751,8 @@ function L.setSetting(lo, name, value)
     value = ns.trim(tostring(value))
     local kind = L.settingKind(old)
     if kind == "toggle" and value ~= "0" and value ~= "1" then return nil, "Use 0 or 1." end
-    if kind == "number" and not tonumber(value) then return nil, "That setting takes a number." end
-    if #value > 256 then return nil, "That's too long for a setting." end
+    if kind == "number" and not tonumber(value) then return nil, "That Blizzard setting takes a number." end
+    if #value > 256 then return nil, "That's too long for a Blizzard setting." end
     if value ~= old then
         track(lo)
         lo.cvars[name] = value
@@ -908,7 +966,7 @@ function L.export(lo)
     local out = {}
     encode({name = lo.name, class = lo.class, className = lo.className, from = lo.from, created = lo.created,
         actions = lo.actions, macros = lo.macros, bindings = lo.bindings, cvars = lo.cvars, bars = lo.bars,
-        anyClass = lo.anyClass, ignored = lo.ignored, rules = lo.rules, lastSlot = lo.lastSlot}, out)
+        anyClass = lo.anyClass, ignored = lo.ignored, rules = lo.rules, lastSlot = lo.lastSlot, off = lo.off}, out)
     return (needsKU3(lo) and PREFIX3 or needsKU2(lo) and PREFIX2 or PREFIX) .. table.concat(out)
 end
 
@@ -1020,6 +1078,14 @@ local function check(t)
             lo.rules[i] = rule
         end
         if #lo.rules == 0 then lo.rules = nil end
+    end
+    if t.off ~= nil then -- parts turned off; versions before this ignore it and load them
+        if type(t.off) ~= "table" or not size(t.off, 4) then return nil end
+        for part, on in pairs(t.off) do
+            if not (type(part) == "string" and L.ALL[part] and on == true) then return nil end
+            lo.off = lo.off or {}
+            lo.off[part] = true
+        end
     end
     -- bars 6 to 8 come in on any client; one without them never loads them
     if t.lastSlot ~= nil and not int(t.lastSlot, L.SLOTS, L.MAX_SLOT) then return nil end
@@ -1228,7 +1294,8 @@ local function due(test)
 end
 local function fired() return ns.charDB.loadoutRules end
 
--- Whether loading lo (all of it) would change anything here: its bars, macros' text, keys, settings or bar toggles
+-- Whether loading lo (the parts that are on) would change anything here: its bars, macros' text, keys, settings or
+-- bar toggles
 local function sameKeys(a, b)
     local n = {}
     for _, k in pairs(a or {}) do n[k] = (n[k] or 0) + 1 end
@@ -1237,8 +1304,9 @@ local function sameKeys(a, b)
     return true
 end
 function L.wouldChange(lo)
-    if L.preview(lo).changes > 0 then return true end
-    for _, m in ipairs(lo.macros) do
+    local on = function(part) return L.partOn(lo, part) end
+    if on("actions") and L.preview(lo).changes > 0 then return true end
+    for _, m in ipairs(on("macros") and lo.macros or {}) do
         local i = macroIndex(m.name, m.account)
         if not i or select(3, GetMacroInfo(i)) ~= m.body then return true end
     end
@@ -1251,12 +1319,15 @@ function L.wouldChange(lo)
         local keys = macroKeys(command)
         if #keys > 0 then now[command] = keys end
     end
-    for command, keys in pairs(lo.bindings) do
-        if not sameKeys(keys, now[command]) then return true end
+    if on("bindings") then
+        for command, keys in pairs(lo.bindings) do
+            if not sameKeys(keys, now[command]) then return true end
+        end
+        for command in pairs(now) do
+            if not lo.bindings[command] then return true end
+        end
     end
-    for command in pairs(now) do
-        if not lo.bindings[command] then return true end
-    end
+    if not on("cvars") then return false end
     for name, value in pairs(lo.cvars) do
         local v = C_CVar and C_CVar.GetCVarInfo and C_CVar.GetCVarInfo(name)
         if v ~= nil and v ~= value then return true end
@@ -1425,7 +1496,7 @@ end)
 ns.AddCommand("loadouts", "/ku loadouts - opens or closes the loadouts window", function() L.toggle() end, "loadouts")
 
 local panel, category = ns.AddSettingsPage("Loadouts",
-    "Save your action bars, macros, key bindings and interface settings, and load them on another character.", "loadouts")
+    "Save your action bars, macros, key bindings and Blizzard settings, and load them on another character.", "loadouts")
 L.category = category
 ns.Label(panel, "Spells a character doesn't know yet are placed when it learns them.")
 ns.Button(panel, "Open loadouts", 160, function() L.toggle() end, "Loadouts window")

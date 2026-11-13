@@ -135,7 +135,7 @@ local function shownLoadouts() -- newest first, under the search
     local shown = {}
     for _, item in ipairs(L.sorted()) do
         local lo = item.lo
-        local found = query == "" or lo.name:lower():find(query, 1, true) or (lo.className or ""):lower():find(query, 1, true)
+        local found = query == "" or lo.name:lower():find(query, 1, true) or (lo.anyClass and "any class" or lo.className or ""):lower():find(query, 1, true)
         if found then shown[#shown + 1] = item end
     end
     return shown
@@ -153,7 +153,7 @@ emptyText:SetWidth(380)
 emptyText:SetWordWrap(true)
 emptyText:SetJustifyH("CENTER")
 emptyText:SetText("No loadouts yet. Type a name above and click Save current to keep your bars, macros, bindings and "
-    .. "settings, or click Import to add one someone shared.")
+    .. "Blizzard settings, or click Import to add one someone shared.")
 
 local renameBox = St.EditBox(detail) -- the name; edit it to rename
 renameBox:SetPoint("TOPLEFT", 20, -12)
@@ -176,8 +176,8 @@ from:SetPoint("TOPLEFT", 12, -42)
 from:SetPoint("RIGHT", -12, 0)
 frame.from = from
 
-local TABS = {{"bars", "Bars"}, {"macros", "Macros"}, {"bindings", "Bindings"}, {"cvars", "Settings"},
-    {"rules", "Rules"}} -- "Rules": "Apply automatically" would run under the Macros tab's buttons
+local TABS = {{"bars", "Bars"}, {"macros", "Macros"}, {"bindings", "Bindings"}, {"cvars", "Blizzard"},
+    {"rules", "Rules"}} -- "Rules", "Blizzard": longer names would run under the Macros tab's buttons
 local tabs = {}
 for i, t in ipairs(TABS) do
     local b = St.TextTab(detail, function()
@@ -239,10 +239,16 @@ for _, bar in ipairs(BARS) do
             b.cross:SetTexture("Interface\\RaidFrame\\ReadyCheck-NotReady")
         end
         b.cross:Hide()
+        -- a macro's name at the slot's bottom, as the action bars show it
+        b.macroName = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+        b.macroName:SetPoint("BOTTOMLEFT", 1, 1)
+        b.macroName:SetPoint("BOTTOMRIGHT", -1, 1)
+        b.macroName:SetWordWrap(false)
         b.slot = slot
         b:SetScript("OnEnter", function(self)
             if not (self.what or self.changed or self.editable or self.ignored) then return end
             local lines = {("%s, slot %d"):format(bar[2], i)}
+            if self.macro then lines[#lines + 1] = "A macro: loading puts your macro of this name here." end
             if self.ignored then lines[#lines + 1] = "Ignored: loading leaves this slot as it is." end
             if self.waiting then lines[#lines + 1] = "You don't know it yet: it goes on when you learn it." end
             if self.changed then lines[#lines + 1] = self.what and "Loading puts it on your bar." or "Loading empties this slot." end
@@ -334,7 +340,21 @@ local cloneButton = Button(detail, "Clone", 80) -- beside Export, or Restore for
 frame.loadButton, frame.updateButton, frame.deleteButton = loadButton, updateButton, deleteButton
 frame.exportButton, frame.restoreButton, frame.cloneButton = exportButton, restoreButton, cloneButton
 
-local function report(r, parts, done)
+local PART_NAMES = {actions = "bars", macros = "macros", bindings = "key bindings", cvars = "Blizzard settings"}
+L.PART_NAMES = PART_NAMES
+-- "bars and macros": the parts of lo that are off (nil when none), or of those picked in parts
+local function offParts(lo, parts)
+    local out = {}
+    for _, part in ipairs({"actions", "macros", "bindings", "cvars"}) do
+        if (not parts or parts[part]) and not L.partOn(lo, part) then out[#out + 1] = PART_NAMES[part] end
+    end
+    if #out == 0 then return nil end
+    local last = table.remove(out)
+    return #out > 0 and table.concat(out, ", ") .. " and " .. last or last
+end
+local function report(r, parts, done, lo)
+    local skipped = not lo.backup and offParts(lo)
+    parts = r.parts or parts
     local out = {}
     if parts.actions then
         out[#out + 1] = count(r.placed, "action", "actions") .. " placed"
@@ -343,12 +363,13 @@ local function report(r, parts, done)
     end
     if parts.macros then out[#out + 1] = count(r.macros, "macro", "macros") end
     if parts.bindings then out[#out + 1] = count(r.bindings, "key binding", "key bindings") end
-    if parts.cvars then out[#out + 1] = count(r.cvars, "setting", "settings") end
-    return done .. ": " .. table.concat(out, ", ") .. ". Undo it with the newest backup."
+    if parts.cvars then out[#out + 1] = count(r.cvars, "Blizzard setting", "Blizzard settings") end
+    return done .. ": " .. table.concat(out, ", ") .. "." .. (skipped and (" Skipped %s: off in this loadout."):format(skipped)
+        or "") .. " Undo it with the newest backup."
 end
 local function load(lo, parts, done)
     local r, why = L.load(lo, parts)
-    status:SetText(r and report(r, parts, done) or "Not " .. done:lower() .. ": " .. why)
+    status:SetText(r and report(r, parts, done, lo) or "Not " .. done:lower() .. ": " .. why)
     refresh()
 end
 
@@ -360,7 +381,7 @@ local function Dialog(w, h) return L.Dialog(frame, w, h) end
 local loadDialog = Dialog(330, 244)
 loadDialog.ok:SetText("Load")
 local loading -- the loadout the load dialog is open for
-local PARTS = {{"actions", "Action bars"}, {"macros", "Macros"}, {"bindings", "Key bindings"}, {"cvars", "Interface settings"}}
+local PARTS = {{"actions", "Action bars"}, {"macros", "Macros"}, {"bindings", "Key bindings"}, {"cvars", "Blizzard settings"}}
 local boxes = {}
 for i, p in ipairs(PARTS) do
     local box = St.Checkbox(loadDialog)
@@ -460,8 +481,9 @@ end)
 local asking
 local POPUPS = {"KUREQUTILS_RESTORE_LOADOUT", "KUREQUTILS_UPDATE_LOADOUT", "KUREQUTILS_DELETE_LOADOUT"}
 local function confirm(which, text, fn)
+    local target = asking -- each popup keeps its own, so another one asking meanwhile can't swap it
     StaticPopupDialogs[which] = {text = text, button1 = YES or "Yes", button2 = NO or "No",
-        OnAccept = function() if asking and ns.IsOn("loadouts") then fn(asking) end end,
+        OnAccept = function() if target and ns.IsOn("loadouts") then fn(target) end end,
         timeout = 0, whileDead = true, hideOnEscape = true}
     StaticPopup_Show(which)
 end
@@ -474,8 +496,14 @@ loadButton:SetScript("OnClick", function()
     share:Hide()
     loadDialog.title:SetText("Load " .. lo.name .. "?")
     loadDialog.text:SetText("Tick what it replaces. What you have now is kept as a backup first.")
-    for _, box in pairs(boxes) do box:SetChecked(true) end
-    loadDialog.ok:SetEnabled(true)
+    local any = false
+    for _, p in ipairs(PARTS) do -- a part that's off in the loadout is skipped, and says so
+        local on = L.partOn(lo, p[1])
+        boxes[p[1]]:SetChecked(on)
+        boxes[p[1]].Text:SetText(on and p[2] or p[2] .. " |cff999999(off in this loadout)|r")
+        any = any or on
+    end
+    loadDialog.ok:SetEnabled(any)
     loadDialog:Show()
 end)
 restoreButton:SetScript("OnClick", function()
@@ -495,8 +523,12 @@ updateButton:SetScript("OnClick", function()
         local old = L.list()[id]
         if not old then return end
         if InCombatLockdown() then return ns.say("loadouts save out of combat.") end
-        L.save(old.name, id)
-        status:SetText("Updated " .. old.name .. " from what you have now.")
+        local _, kept = L.save(old.name, id)
+        local off = offParts(old)
+        status:SetText("Updated " .. old.name .. " from what you have now"
+            .. (kept > 0 and ("; %s left as %s"):format(count(kept, "ignored slot", "ignored slots"),
+                kept == 1 and "it was" or "they were") or "")
+            .. (off and ("; %s left as they were (off in it)"):format(off) or "") .. ".")
         refresh()
     end)
 end)
@@ -523,15 +555,49 @@ end)
 
 -- Showing the chosen loadout ---------------------------------------------------------------------------------------
 
+-- What a spell or item name (or an equipment slot, "/use 13", or a bag and slot, "/use 0 1") shows as an icon, or nil
+local function namedIcon(what)
+    local bag, inBag = what:match("^(%d+)%s+(%d+)$")
+    if bag then
+        local info = C_Container and C_Container.GetContainerItemInfo
+            and C_Container.GetContainerItemInfo(tonumber(bag), tonumber(inBag))
+        return info and info.iconFileID
+    end
+    local slot = tonumber(what)
+    if slot then return slot <= 19 and GetInventoryItemTexture and GetInventoryItemTexture("player", slot) or nil end
+    return select(3, L.spellInfo(what)) or L.itemIcon(what)
+end
+local function isQuestionMark(icon)
+    return icon == nil or icon == 134400 or type(icon) == "string" and icon:lower():find("inv_misc_questionmark") ~= nil
+end
+-- A macro slot's icon: the loadout's copy of the macro, else your macro of that name; when that's the question mark
+-- (#showtooltip), the spell or item it shows: #showtooltip's own choice, else the first one it casts or uses.
+function L.macroIcon(lo, name)
+    local icon, body
+    for _, m in ipairs(lo.macros) do
+        if m.name == name then icon, body = m.icon, m.body end
+    end
+    if not body then
+        local _, mine, text = GetMacroInfo(name)
+        icon, body = mine, text
+    end
+    if not isQuestionMark(icon) then return L.iconPath(icon) end
+    body = body or ""
+    local shown = body:match("^%s*#showtooltip[ \t]+([^\n]*)")
+    shown = shown and shown:gsub("%b[]", ""):match("^%s*([^;]*)"):match("^(.-)%s*$") -- the first choice
+    if not (shown and shown ~= "") and ns.macroCode then
+        shown = ns.macroCode.summary(body):gsub(" %+%d+$", "")
+        if shown:find("^/") or not body:find("%S") then shown = nil end
+    end
+    return shown and shown ~= "" and namedIcon(shown) or 134400
+end
+
 local function iconOf(lo, a)
     if a.type == "spell" then
         local name, _, icon = L.spellInfo(a.id or a.name)
         return icon, a.name or name
     elseif a.type == "macro" then
-        for _, m in ipairs(lo.macros) do
-            if m.name == a.name then return m.icon, "Macro: " .. a.name end
-        end
-        return 134400, "Macro: " .. a.name -- a general macro (question mark icon)
+        return L.macroIcon(lo, a.name), "Macro: " .. a.name
     elseif a.type == "item" then
         local name = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(a.id)
         return L.itemIcon(a.id), name or ("Item " .. a.id)
@@ -541,6 +607,7 @@ end
 
 local function showBars(lo, editable)
     local p = L.preview(lo)
+    if not L.partOn(lo, "actions") then p.changed, p.waiting, p.changes, p.waits = {}, {}, 0, 0 end -- loading skips them
     local shown = 0
     for _, bar in ipairs(BARS) do
         local row, first = barRows[bar[1]], (bar[1] - 1) * 12
@@ -564,6 +631,8 @@ local function showBars(lo, editable)
                     b.what = nil
                 end
                 b.icon:SetShown(a ~= nil)
+                b.macro = a and a.type == "macro" or nil
+                b.macroName:SetText(b.macro and a.name or "")
                 b.changed, b.waiting, b.editable = p.changed[slot], p.waiting[slot], editable
                 b.ignored = L.ignores(lo, slot) or nil
                 b:SetBackdropBorderColor(GOLD[1], GOLD[2], GOLD[3], b.changed and 1 or 0)
@@ -617,7 +686,7 @@ local function showLines(lo)
         for name in pairs(lo.cvars) do names[#names + 1] = name end
         table.sort(names)
         for _, name in ipairs(names) do add(nil, L.settingName(name), lo.cvars[name], name) end
-        summary:SetText(count(n, "interface setting", "interface settings")
+        summary:SetText((n == 0 and "No Blizzard settings" or count(n, "Blizzard setting", "Blizzard settings"))
             .. " changed from the defaults (Game and Combat settings).")
     end
     for i = n + 1, #lines do lines[i]:Hide() end
@@ -640,7 +709,7 @@ local function refreshDetail()
     if not lo then return L.ui.decorate and L.ui.decorate(tab, nil, true, 0) end
     if not renameBox:HasFocus() then renameBox:SetText(lo.name) end
     anyClassBox:SetChecked(lo.anyClass == true)
-    from:SetText(("%s%s|r · %s %s, %s"):format(classColor(lo.class), lo.className or "?",
+    from:SetText(("%s · %s %s, %s"):format(lo.anyClass and "Any class" or classColor(lo.class) .. (lo.className or "?") .. "|r",
         isBackup and "backup of" or "saved from", lo.from or "?", stamp(lo.updated or lo.created)))
     for _, t in ipairs(TABS) do tabs[t[1]]:Set(t[2], tab == t[1]) end
     local height
@@ -706,7 +775,7 @@ function refresh()
         rows[i] = b
         local lo = item.lo
         b.id, b.name = item.id, lo.name
-        b.nameText:SetText(classColor(lo.class) .. lo.name .. "|r")
+        b.nameText:SetText(lo.anyClass and lo.name or classColor(lo.class) .. lo.name .. "|r") -- Any class: no class color
         b.count:SetText(lo.anyClass and "Any class" or lo.className or "")
         b.sub:SetText("from " .. (lo.from or "?") .. (L.hasRules(lo) and " · applies by itself" or ""))
         b.each:SetText(date("%d %b", lo.updated or lo.created))
@@ -742,7 +811,7 @@ frame:SetScript("OnShow", refresh)
 L.changed = refresh
 
 -- What the editor (LoadoutsEditor.lua) builds on; a part as wide as the content adds fn(width) to resized
-L.ui = {frame = frame, detail = detail, content = content, summary = summary, status = status, lines = lines,
+L.ui = {frame = frame, detail = detail, content = content, contentScroll = contentScroll, summary = summary, status = status, lines = lines,
     CONTENT_W = CONTENT_W, SUMMARY_H = SUMMARY_H, LINE_H = LINE_H, Button = Button, Prompt = Prompt, Dialog = Dialog,
     chosen = chosen, bindingName = bindingName, refresh = function() refresh() end, resized = {}}
 

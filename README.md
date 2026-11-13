@@ -150,14 +150,16 @@ everyone in your guild who has Kureq Utils, and see theirs.
 
 ## Loadouts
 
-Save your action bars, macros, key bindings and settings as a named loadout, and load it on any character
+Save your action bars, macros, key bindings and Blizzard settings as a named loadout, and load it on any character
 (`/ku loadouts`).
 
 ![Loadouts: a saved loadout's bars](https://raw.githubusercontent.com/viktorbergqvist/kureq_utils/main/media/screenshots/loadouts.png)
 
 - **Preview:** see a loadout's bars as icons before loading. Slots that would change are marked, and spells you
   don't know yet are dimmed (they're placed once you learn them).
-- **Load only parts:** pick Bars, Macros, Bindings and Settings in the load confirmation.
+- **Load only parts:** pick Action bars, Macros, Key bindings and Blizzard settings in the load confirmation.
+- **Parts per loadout:** untick **Load these** on a tab to keep that part in the loadout but skip it on Load and
+  Update from current; **Clear all** empties a part (it asks first, and Revert changes undoes it).
 - **Undo:** each load first saves your current setup as a backup ("Before <name>", the last 5 per character); Restore
   puts back what that load changed.
 - **Share:** Export gives one line of text to copy; paste it into Import to make a copy. Imported macros can contain
@@ -200,7 +202,7 @@ Change a saved loadout in its tabs; your character only changes when you load it
   to move it, right-click to put one of the loadout's macros there, clear it, or ignore the slot or its bar.
 - **Bindings:** click a key and press the new one (Escape cancels), right-click to clear it, or **Add a binding** for
   the loadout's macros and buttons. A key used elsewhere in the loadout moves.
-- **Settings:** tick or type each setting's value, or remove it from the loadout.
+- **Blizzard settings:** tick or type each setting's value, or remove it from the loadout.
 
 ## Macros
 

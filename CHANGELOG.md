@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.12 (2026-11-13)
+
+### Loadouts
+
+- Right-click a slot to clear or ignore it, or its whole bar.
+- Update from current leaves ignored slots and bars as they were.
+- Turn a loadout's bars, macros, key bindings or Blizzard settings off so Load skips them, or clear a whole part.
+- A loadout's game settings are now called Blizzard settings.
+- Macro slots show the macro's name and the icon of the spell or item it uses.
+- Any class loadouts show as Any class, not in the color of the class that saved them.
+
 ## v1.11 (2026-11-13)
 
 ### Macros
