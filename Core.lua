@@ -227,7 +227,7 @@ end
 -- yet (shown as a question mark); add(itemID) and remove(index) change it, then the page refreshes.
 local GetItemInfoInstant = C_Item and C_Item.GetItemInfoInstant or _G.GetItemInfoInstant
 local ICON, PER_ROW = 28, 10 -- shortcut: a fixed 10 per row fits Blizzard's settings window; measure the column if it gets narrower
-local UNKNOWN, EMPTY = "Interface\\Icons\\INV_Misc_QuestionMark", "Interface\\Buttons\\UI-EmptySlot-Disabled"
+local UNKNOWN, EMPTY = "Interface\\Icons\\INV_Misc_QuestionMark", "Interface\\Buttons\\UI-EmptySlot"
 function ns.ItemList(panel, label, tooltip, get, add, remove)
     local top = panel.y
     settingRow(panel, label)
@@ -258,6 +258,8 @@ function ns.ItemList(panel, label, tooltip, get, add, remove)
         GameTooltip:Show()
     end
     local buttons = {}
+    local hint = holder:CreateFontString(nil, "ARTWORK", "GameFontDisable") -- the empty slot alone is easy to miss
+    hint:SetText("Drop an item from your bags here")
     local function slot(i)
         if buttons[i] then return buttons[i] end
         local b = CreateFrame("Button", nil, holder)
@@ -291,7 +293,10 @@ function ns.ItemList(panel, label, tooltip, get, add, remove)
             b:SetShown(i <= n)
         end
         holder:SetHeight(math.ceil(n / PER_ROW) * ROW)
+        hint:SetPoint("LEFT", slot(1), "RIGHT", 8, 0)
+        hint:SetShown(n == 1)
     end)
+    holder.hint = hint
     return holder
 end
 
@@ -332,7 +337,7 @@ function ns.RuleList(panel, label, tooltip, kinds, get, add, remove, note)
     for _, f in ipairs({menu, box, addButton}) do addTooltip(f, label, tooltip) end
 
     local holder = growingRow(panel, panel.y)
-    holder:SetHeight(0)
+    holder:SetHeight(1) -- never 0: the game draws nothing anchored below a frame with no height
     holder.ruleMenu, holder.ruleBox, holder.addButton, holder.rows = menu, box, addButton, {}
     local rows = holder.rows
     local function row(i)
@@ -378,7 +383,7 @@ function ns.RuleList(panel, label, tooltip, kinds, get, add, remove, note)
             end
             r:SetShown(rule ~= nil)
         end
-        holder:SetHeight(#list * ROW)
+        holder:SetHeight(math.max(#list * ROW, 1))
     end)
     return holder
 end

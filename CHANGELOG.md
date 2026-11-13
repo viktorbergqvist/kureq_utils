@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.7.1 (2026-11-13)
+
+### Settings
+
+- Empty item lists show a clear slot and say to drop an item there
+- An empty name rule list no longer hides the rest of the page (Allow delete on Delete items)
+
 ## v1.7 (2026-11-13)
 
 ### Loadouts
