@@ -78,6 +78,21 @@ local blizzardButton = Button(macrosPage, "Blizzard's window", 130) -- the game'
 blizzardButton:SetPoint("RIGHT", historyButton, "LEFT", -6, 0)
 blizzardButton:SetScript("OnClick", function() frame:Hide(); M.openBlizzard() end)
 
+-- Pick mode (M.pick, from a loadout's slot menu): a banner over the top bar says where the macro goes; clicking a row
+-- hands that macro over and closes the window. Cancel, Escape or closing either window ends it.
+local picking -- {text, fn} while a loadout slot waits for a macro
+local banner = Pane(body)
+banner:SetPoint("TOPLEFT", PAD, -PAD + 2)
+banner:SetPoint("TOPRIGHT", -PAD, -PAD + 2)
+banner:SetHeight(TOP_H + 4)
+banner:SetFrameLevel(macrosPage:GetFrameLevel() + 10)
+banner.text = Text(banner, "GameFontNormal")
+banner.text:SetPoint("LEFT", 12, 0)
+banner.cancel = Button(banner, "Cancel", 90)
+banner.cancel:SetPoint("RIGHT", -6, 0)
+banner:Hide()
+local TOP_BAR = {search, counts, newButton, importButton, historyButton, blizzardButton}
+
 -- A list pane left and a detail pane right, as on both pages
 local function panes(parent, title)
     local list = Pane(parent)
@@ -438,6 +453,13 @@ end
 local FORM_PARTS = {ed, drag, drag.label, deleteButton, saveButton, revertButton}
 local function pickRow(self)
     local x = self.macro
+    if picking then
+        local why = picking.fn(x) -- a refusal keeps pick mode
+        if why then return say(why) end
+        picking = nil
+        frame:Hide()
+        return
+    end
     if loaded and x.index == loaded.index and x.name == loaded.name then return end -- the one in the form
     discardFirst(function()
         selected = x
@@ -714,6 +736,9 @@ function refresh()
     for key, p in pairs(pages) do p.frame:SetShown(page == key) end
     macrosPage:SetShown(isMacros(page))
     for _, t in ipairs(tabs) do t:SetOn(t.page == page) end
+    banner:SetShown(picking ~= nil)
+    banner.text:SetText(picking and picking.text or "")
+    for _, part in ipairs(TOP_BAR) do part:SetShown(not picking) end
     local numAccount, numChar = M.counts()
     local function part(label, n, cap) return ("%s%s %d of %d|r"):format(n >= cap and "|cffff4040" or "", label, n, cap) end
     counts:SetText(part("General", numAccount, M.CAPS.account) .. "  ·  "
@@ -722,7 +747,10 @@ function refresh()
 end
 frame:SetScript("OnShow", refresh)
 local DIALOGS = {iconDialog, importDialog, historyDialog}
-frame:SetScript("OnHide", function() for _, d in ipairs(DIALOGS) do d:Hide() end end)
+frame:SetScript("OnHide", function()
+    picking = nil
+    for _, d in ipairs(DIALOGS) do d:Hide() end
+end)
 M.changed = refresh
 
 function M.toggle()
@@ -734,6 +762,19 @@ function M.open(key)
     goTo(key or page or "account") -- no page asked for: the one you were on, else General
     refresh()
 end
+-- Pick mode: text on the banner; clicking a General or Character macro calls fn(macro), which returns why it refuses
+-- it, or nothing. account: start on General.
+function M.pick(text, fn, account)
+    picking = {text = text, fn = fn}
+    search:SetText("") -- hidden while picking, so it mustn't filter
+    M.open(account and "account" or "character")
+end
+function M.endPick()
+    if not picking then return end
+    picking = nil
+    refresh()
+end
+banner.cancel:SetScript("OnClick", M.endPick)
 -- Adds a page after the others, with its tab, a list pane and a detail pane (as the other pages); draw() fills it
 -- while it shows. Returns the list pane and the detail pane.
 local function addPage(label, key, title, draw)
@@ -750,7 +791,7 @@ M.ui = {frame = frame, tabs = tabs, counts = counts, form = form, cards = cards,
     emptyText = emptyText, status = macroDetail.status, saveButton = saveButton, revertButton = revertButton,
     unsaved = unsaved, search = search, importButton = importButton, importDialog = importDialog,
     historyButton = historyButton, blizzardButton = blizzardButton, historyDialog = historyDialog, historyRows = historyRows, historyTabs = historyTabs,
-    preview = preview, addPage = addPage, quietly = quietly, LIST_W = LIST_W, ROW_H = ROW_H}
+    preview = preview, banner = banner, addPage = addPage, quietly = quietly, LIST_W = LIST_W, ROW_H = ROW_H}
 
 -- Resizing: the list and detail panes stretch on their anchors (the lists show more rows); the code editor grows with
 -- the detail pane, the action rows (Save, Drag to bar, Delete macro) staying under it. The ready-made form keeps its design width.

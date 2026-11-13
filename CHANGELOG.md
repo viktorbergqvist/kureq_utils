@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.12.1 (2026-11-13)
+
+### Loadouts
+
+- Right-click a bar slot and Pick from your macros to put one of your General or Character macros on it.
+- A Character macro that shares its name with a General one can't be picked, since Load would place the General one.
+
 ## v1.12 (2026-11-13)
 
 ### Loadouts

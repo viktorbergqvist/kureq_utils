@@ -244,10 +244,10 @@ for _, bar in ipairs(BARS) do
         b.macroName:SetPoint("BOTTOMLEFT", 1, 1)
         b.macroName:SetPoint("BOTTOMRIGHT", -1, 1)
         b.macroName:SetWordWrap(false)
-        b.slot = slot
+        b.slot, b.label = slot, ("%s, slot %d"):format(bar[2], i)
         b:SetScript("OnEnter", function(self)
             if not (self.what or self.changed or self.editable or self.ignored) then return end
-            local lines = {("%s, slot %d"):format(bar[2], i)}
+            local lines = {self.label}
             if self.macro then lines[#lines + 1] = "A macro: loading puts your macro of this name here." end
             if self.ignored then lines[#lines + 1] = "Ignored: loading leaves this slot as it is." end
             if self.waiting then lines[#lines + 1] = "You don't know it yet: it goes on when you learn it." end

@@ -312,6 +312,25 @@ for slot, b in pairs(frame.icons) do
                         refresh()
                     end)
                 end
+                local M = ns.macros
+                if M and ns.IsOn("macros") then -- one of your macros, by name, as a captured slot has it
+                    root:CreateButton("Pick from your macros…", function()
+                        local a = lo.actions[slot]
+                        -- the tab of the slot's macro: Load places the General one of a name first
+                        local general = not (a and a.type == "macro" and not M.find(nil, a.name, true)
+                            and M.find(nil, a.name, false))
+                        M.pick(("Click a macro to put it in %s of %s."):format(self.label, lo.name), function(m)
+                            for _, x in ipairs(M.list()) do -- the slot keeps a name, and Load places General first
+                                if not m.account and x.account and x.name == m.name then
+                                    return ("You also have a General macro called %s; Load would place that one. "
+                                        .. "Rename one of them to pick this."):format(m.name)
+                                end
+                            end
+                            L.setSlot(lo, slot, {type = "macro", name = m.name})
+                            refresh()
+                        end, general)
+                    end)
+                end
                 -- cleared: loads as empty; ignored: loading leaves the slot (or the whole bar of 12) as it is
                 local first, bar, all = slot - (slot - 1) % 12, {}, true
                 for s = first, first + 11 do
@@ -618,6 +637,7 @@ function U.decorate(tab, lo, isBackup, height)
 end
 
 frame:HookScript("OnHide", function()
+    if ns.macros then ns.macros.endPick() end -- a pick for this window's loadout
     L.endEdits()
     stopListening()
     iconDialog:Hide()
